@@ -1,15 +1,17 @@
 
 import grpc
-
 import kvstore_pb2
 import kvstore_pb2_grpc
-
+from chaosmonkey import CMServer
 
 class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
     def __init__(self, addresses: list, id: int):
         self.storage = dict()
         self.addresses = addresses
         self.id = id
+        self.cmserver = CMServer(num_server=len(addresses))
+        print('Initial ChaosMonkey matrix:')
+        print(self.cmserver)
 
     def localGet(self, key):
         resp = kvstore_pb2.GetResponse()

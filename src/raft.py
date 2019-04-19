@@ -1,9 +1,11 @@
 from kvstore import KVServer
+from chaosmonkey import CMServer
 from concurrent import futures
 import time
 import click
 import grpc
 import kvstore_pb2_grpc
+import chaosmonkey_pb2_grpc
 import csv
 
 @click.command()
@@ -17,8 +19,12 @@ def start_server(address, id, server_list_file):
         reader = csv.DictReader(file)
         for row in reader:
             addr_list.append(row['address'])
+    kvserver = KVServer(addr_list, id)
     kvstore_pb2_grpc.add_KeyValueStoreServicer_to_server(
-        KVServer(addr_list, id), server
+        kvserver, server
+    )
+    chaosmonkey_pb2_grpc.add_ChaosMonkeyServicer_to_server(
+        kvserver.cmserver, server
     )
     server.add_insecure_port(address)
     server.start()
