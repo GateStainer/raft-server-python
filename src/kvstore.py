@@ -2,6 +2,7 @@
 import grpc
 import kvstore_pb2
 import kvstore_pb2_grpc
+import random
 from chaosmonkey import CMServer
 
 class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
@@ -78,7 +79,10 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         for idx, addr in enumerate(self.addresses):
             if idx == self.id:
                 continue
-            print(f'RAFT: serverPut <{key}, {val}> to {addr}')
+            print(f'RAFT: serverPut <{key}, {val}> to {addr}, fail rate {self.cmserver.fail_mat[self.id][idx]}')
+            if random.uniform(0, 1) < self.cmserver.fail_mat[self.id][idx]:
+                print(f'RAFT[ABORTED]: serverPut <{key}, {val}> to {addr}, because of ChaosMonkey')
+                continue
             with grpc.insecure_channel(addr) as channel:
                 try:
                     stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
