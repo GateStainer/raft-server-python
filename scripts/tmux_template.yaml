@@ -1,0 +1,7 @@
+session_name: raft-server-environment
+windows:
+- window_name: raft-server
+  layout: tiled
+  shell_command_before:
+    - pwd
+  panes:

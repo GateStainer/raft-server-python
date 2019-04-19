@@ -16,18 +16,21 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         try:
             resp.value = self.storage[key]
             resp.ret = kvstore_pb2.SUCCESS
+            print(f'RAFT: localGet <{key}, {resp.value}>')
         except KeyError:
-            print(f'RAFT: Get failed, no such key: [{key}]')
             resp.ret = kvstore_pb2.FAILURE
+            print(f'RAFT: localGet failed, no such key: [{key}]')
         return resp
 
     def localPut(self, key, val):
         resp = kvstore_pb2.PutResponse()
         self.storage[key] = val
         resp.ret = kvstore_pb2.SUCCESS
+        print(f'RAFT: localPut <{key}, {val}>')
         return resp
 
     def serverGet(self, request, context):
+        print(f'RAFT: get a serverGet request')
         resp = self.localGet(request.key)
         if resp.ret == kvstore_pb2.SUCCESS:
             context.set_code(grpc.StatusCode.OK)
@@ -36,7 +39,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         return resp
 
     def serverPut(self, request, context):
-        resp = self.localPut(request.key, request.val)
+        print(f'RAFT: get a serverPut request, <{request.key}, {request.value}>')
+        resp = self.localPut(request.key, request.value)
         if resp.ret == kvstore_pb2.SUCCESS:
             context.set_code(grpc.StatusCode.OK)
         else:
@@ -72,7 +76,16 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         for idx, addr in enumerate(self.addresses):
             if idx == self.id:
                 continue
-            print(f'RAFT: serverPut to {addr}')
+            print(f'RAFT: serverPut <{key}, {val}> to {addr}')
             with grpc.insecure_channel(addr) as channel:
-                stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
-                serverPutResp = stub.serverPut(kvstore_pb2.PutRequest(key=key, value=val))
+                try:
+                    stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
+                    req = kvstore_pb2.PutRequest(key=key, value=val)
+                    serverPutResp = stub.serverPut(req)
+                except Exception as e:
+                    print(e)
+        if resp.ret == kvstore_pb2.SUCCESS:
+            context.set_code(grpc.StatusCode.OK)
+        else:
+            context.set_code(grpc.StatusCode.CANCELLED)
+        return resp
