@@ -11,6 +11,7 @@ import logging
 import logging.handlers
 import sys
 import os
+import socket
 
 
 @click.command()
@@ -50,6 +51,7 @@ def start_server(address, id, server_list_file):
     )
     server.add_insecure_port(address)
     server.start()
+    logger.info(f'{socket.gethostname()}')
     logger.info(f'Server [{server_name}] listening {address}')
     try:
         while True:
