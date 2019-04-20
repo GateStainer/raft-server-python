@@ -1,4 +1,4 @@
-id,address
-0,localhost:7000
-1,localhost:7001
-2,localhost:7002
+id,address,port
+0,localhost,7000
+1,localhost,7001
+2,localhost,7002

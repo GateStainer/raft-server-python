@@ -14,9 +14,9 @@ import os
 
 
 @click.command()
-@click.argument('address', default='localhost:7000')
-@click.argument('id', type=int, default=0)
-@click.argument('server_list_file', default='server-list.csv')
+@click.argument('address', default='0.0.0.0:7000')
+@click.option('--id', type=int, default=0)
+@click.option('--server_list_file', default='server-list.csv')
 def start_server(address, id, server_list_file):
     server_name = f'{id}-{address.replace(":", "-")}'
     logger = logging.getLogger('raft')
@@ -40,7 +40,7 @@ def start_server(address, id, server_list_file):
     with open(server_list_file, 'r') as file:
         reader = csv.DictReader(file)
         for row in reader:
-            addr_list.append(row['address'])
+            addr_list.append(f"{row['address']}:{row['port']}")
     kvserver = KVServer(addr_list, id)
     kvstore_pb2_grpc.add_KeyValueStoreServicer_to_server(
         kvserver, server
