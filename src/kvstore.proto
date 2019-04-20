@@ -7,6 +7,7 @@ service KeyValueStore {
     rpc Put(PutRequest) returns (PutResponse) {}
     rpc serverPut(PutRequest) returns (PutResponse) {}
     rpc serverGet(GetRequest) returns (GetResponse) {}
+    rpc appendEntries(AppendRequest) returns (AppendResponse) {}
 }
 
 // You'll likely need to define more specific return codes than these!
@@ -30,5 +31,21 @@ message PutRequest {
 }
 
 message PutResponse {
+    ReturnCode ret = 1;
+}
+
+enum AppendType {
+    HEARTBEAT = 0;
+    GET = 1;
+    PUT = 2;
+}
+
+message AppendRequest {
+    AppendType type = 1;
+    string key = 2;
+    string value = 3;
+}
+
+message AppendResponse {
     ReturnCode ret = 1;
 }

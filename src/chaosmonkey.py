@@ -34,7 +34,7 @@ class CMServer(chaosmonkey_pb2_grpc.ChaosMonkeyServicer):
             resp = chaosmonkey_pb2.Status(ret = 0)
             return resp
         except Exception as e:
-            pass
+            print(e)
     
     def __str__(self):
         return '\n'.join([' '.join([f'{e:.2f}' for e in m]) for m in self.fail_mat])
