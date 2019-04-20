@@ -21,7 +21,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   package='kvstore',
   syntax='proto3',
   serialized_options=None,
-  serialized_pb=_b('\n\rkvstore.proto\x12\x07kvstore\"\x19\n\nGetRequest\x12\x0b\n\x03key\x18\x01 \x01(\t\">\n\x0bGetResponse\x12\r\n\x05value\x18\x01 \x01(\t\x12 \n\x03ret\x18\x02 \x01(\x0e\x32\x13.kvstore.ReturnCode\"(\n\nPutRequest\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t\"/\n\x0bPutResponse\x12 \n\x03ret\x18\x01 \x01(\x0e\x32\x13.kvstore.ReturnCode\"N\n\rAppendRequest\x12!\n\x04type\x18\x01 \x01(\x0e\x32\x13.kvstore.AppendType\x12\x0b\n\x03key\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\"2\n\x0e\x41ppendResponse\x12 \n\x03ret\x18\x01 \x01(\x0e\x32\x13.kvstore.ReturnCode*&\n\nReturnCode\x12\x0b\n\x07SUCCESS\x10\x00\x12\x0b\n\x07\x46\x41ILURE\x10\x01*-\n\nAppendType\x12\r\n\tHEARTBEAT\x10\x00\x12\x07\n\x03GET\x10\x01\x12\x07\n\x03PUT\x10\x02\x32\xaf\x02\n\rKeyValueStore\x12\x32\n\x03Get\x12\x13.kvstore.GetRequest\x1a\x14.kvstore.GetResponse\"\x00\x12\x32\n\x03Put\x12\x13.kvstore.PutRequest\x1a\x14.kvstore.PutResponse\"\x00\x12\x38\n\tserverPut\x12\x13.kvstore.PutRequest\x1a\x14.kvstore.PutResponse\"\x00\x12\x38\n\tserverGet\x12\x13.kvstore.GetRequest\x1a\x14.kvstore.GetResponse\"\x00\x12\x42\n\rappendEntries\x12\x16.kvstore.AppendRequest\x1a\x17.kvstore.AppendResponse\"\x00\x62\x06proto3')
+  serialized_pb=_b('\n\rkvstore.proto\x12\x07kvstore\"\x19\n\nGetRequest\x12\x0b\n\x03key\x18\x01 \x01(\t\">\n\x0bGetResponse\x12\r\n\x05value\x18\x01 \x01(\t\x12 \n\x03ret\x18\x02 \x01(\x0e\x32\x13.kvstore.ReturnCode\"(\n\nPutRequest\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t\"/\n\x0bPutResponse\x12 \n\x03ret\x18\x01 \x01(\x0e\x32\x13.kvstore.ReturnCode\"N\n\rAppendRequest\x12!\n\x04type\x18\x01 \x01(\x0e\x32\x13.kvstore.AppendType\x12\x0b\n\x03key\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\"A\n\x0e\x41ppendResponse\x12 \n\x03ret\x18\x01 \x01(\x0e\x32\x13.kvstore.ReturnCode\x12\r\n\x05value\x18\x02 \x01(\t*&\n\nReturnCode\x12\x0b\n\x07SUCCESS\x10\x00\x12\x0b\n\x07\x46\x41ILURE\x10\x01*-\n\nAppendType\x12\r\n\tHEARTBEAT\x10\x00\x12\x07\n\x03GET\x10\x01\x12\x07\n\x03PUT\x10\x02\x32\xbb\x01\n\rKeyValueStore\x12\x32\n\x03Get\x12\x13.kvstore.GetRequest\x1a\x14.kvstore.GetResponse\"\x00\x12\x32\n\x03Put\x12\x13.kvstore.PutRequest\x1a\x14.kvstore.PutResponse\"\x00\x12\x42\n\rappendEntries\x12\x16.kvstore.AppendRequest\x1a\x17.kvstore.AppendResponse\"\x00\x62\x06proto3')
 )
 
 _RETURNCODE = _descriptor.EnumDescriptor(
@@ -41,8 +41,8 @@ _RETURNCODE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   serialized_options=None,
-  serialized_start=340,
-  serialized_end=378,
+  serialized_start=355,
+  serialized_end=393,
 )
 _sym_db.RegisterEnumDescriptor(_RETURNCODE)
 
@@ -68,8 +68,8 @@ _APPENDTYPE = _descriptor.EnumDescriptor(
   ],
   containing_type=None,
   serialized_options=None,
-  serialized_start=380,
-  serialized_end=425,
+  serialized_start=395,
+  serialized_end=440,
 )
 _sym_db.RegisterEnumDescriptor(_APPENDTYPE)
 
@@ -279,6 +279,13 @@ _APPENDRESPONSE = _descriptor.Descriptor(
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='value', full_name='kvstore.AppendResponse.value', index=1,
+      number=2, type=9, cpp_type=9, label=1,
+      has_default_value=False, default_value=_b("").decode('utf-8'),
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
   ],
   extensions=[
   ],
@@ -292,7 +299,7 @@ _APPENDRESPONSE = _descriptor.Descriptor(
   oneofs=[
   ],
   serialized_start=288,
-  serialized_end=338,
+  serialized_end=353,
 )
 
 _GETRESPONSE.fields_by_name['ret'].enum_type = _RETURNCODE
@@ -359,8 +366,8 @@ _KEYVALUESTORE = _descriptor.ServiceDescriptor(
   file=DESCRIPTOR,
   index=0,
   serialized_options=None,
-  serialized_start=428,
-  serialized_end=731,
+  serialized_start=443,
+  serialized_end=630,
   methods=[
   _descriptor.MethodDescriptor(
     name='Get',
@@ -381,27 +388,9 @@ _KEYVALUESTORE = _descriptor.ServiceDescriptor(
     serialized_options=None,
   ),
   _descriptor.MethodDescriptor(
-    name='serverPut',
-    full_name='kvstore.KeyValueStore.serverPut',
-    index=2,
-    containing_service=None,
-    input_type=_PUTREQUEST,
-    output_type=_PUTRESPONSE,
-    serialized_options=None,
-  ),
-  _descriptor.MethodDescriptor(
-    name='serverGet',
-    full_name='kvstore.KeyValueStore.serverGet',
-    index=3,
-    containing_service=None,
-    input_type=_GETREQUEST,
-    output_type=_GETRESPONSE,
-    serialized_options=None,
-  ),
-  _descriptor.MethodDescriptor(
     name='appendEntries',
     full_name='kvstore.KeyValueStore.appendEntries',
-    index=4,
+    index=2,
     containing_service=None,
     input_type=_APPENDREQUEST,
     output_type=_APPENDRESPONSE,

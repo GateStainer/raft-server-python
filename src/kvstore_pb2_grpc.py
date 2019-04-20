@@ -24,16 +24,6 @@ class KeyValueStoreStub(object):
         request_serializer=kvstore__pb2.PutRequest.SerializeToString,
         response_deserializer=kvstore__pb2.PutResponse.FromString,
         )
-    self.serverPut = channel.unary_unary(
-        '/kvstore.KeyValueStore/serverPut',
-        request_serializer=kvstore__pb2.PutRequest.SerializeToString,
-        response_deserializer=kvstore__pb2.PutResponse.FromString,
-        )
-    self.serverGet = channel.unary_unary(
-        '/kvstore.KeyValueStore/serverGet',
-        request_serializer=kvstore__pb2.GetRequest.SerializeToString,
-        response_deserializer=kvstore__pb2.GetResponse.FromString,
-        )
     self.appendEntries = channel.unary_unary(
         '/kvstore.KeyValueStore/appendEntries',
         request_serializer=kvstore__pb2.AppendRequest.SerializeToString,
@@ -59,20 +49,6 @@ class KeyValueStoreServicer(object):
     context.set_details('Method not implemented!')
     raise NotImplementedError('Method not implemented!')
 
-  def serverPut(self, request, context):
-    # missing associated documentation comment in .proto file
-    pass
-    context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-    context.set_details('Method not implemented!')
-    raise NotImplementedError('Method not implemented!')
-
-  def serverGet(self, request, context):
-    # missing associated documentation comment in .proto file
-    pass
-    context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-    context.set_details('Method not implemented!')
-    raise NotImplementedError('Method not implemented!')
-
   def appendEntries(self, request, context):
     # missing associated documentation comment in .proto file
     pass
@@ -92,16 +68,6 @@ def add_KeyValueStoreServicer_to_server(servicer, server):
           servicer.Put,
           request_deserializer=kvstore__pb2.PutRequest.FromString,
           response_serializer=kvstore__pb2.PutResponse.SerializeToString,
-      ),
-      'serverPut': grpc.unary_unary_rpc_method_handler(
-          servicer.serverPut,
-          request_deserializer=kvstore__pb2.PutRequest.FromString,
-          response_serializer=kvstore__pb2.PutResponse.SerializeToString,
-      ),
-      'serverGet': grpc.unary_unary_rpc_method_handler(
-          servicer.serverGet,
-          request_deserializer=kvstore__pb2.GetRequest.FromString,
-          response_serializer=kvstore__pb2.GetResponse.SerializeToString,
       ),
       'appendEntries': grpc.unary_unary_rpc_method_handler(
           servicer.appendEntries,

@@ -3,6 +3,7 @@ import grpc
 import kvstore_pb2
 import kvstore_pb2_grpc
 import random
+import logging
 from chaosmonkey import CMServer
 
 class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
@@ -11,7 +12,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.addresses = addresses
         self.id = id
         self.cmserver = CMServer(num_server=len(addresses))
-        print('Initial ChaosMonkey matrix:')
+        self.logger = logging.getLogger('raft')
+        self.logger.info('Initial ChaosMonkey matrix:')
         print(self.cmserver)
 
     def localGet(self, key):
@@ -19,35 +21,17 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         try:
             resp.value = self.storage[key]
             resp.ret = kvstore_pb2.SUCCESS
-            print(f'RAFT: localGet <{key}, {resp.value}>')
+            self.logger.info(f'RAFT: localGet <{key}, {resp.value}>')
         except KeyError:
             resp.ret = kvstore_pb2.FAILURE
-            print(f'RAFT: localGet failed, no such key: [{key}]')
+            self.logger.warn(f'RAFT: localGet failed, no such key: [{key}]')
         return resp
 
     def localPut(self, key, val):
         resp = kvstore_pb2.PutResponse()
         self.storage[key] = val
         resp.ret = kvstore_pb2.SUCCESS
-        print(f'RAFT: localPut <{key}, {val}>')
-        return resp
-
-    def serverGet(self, request, context):
-        print(f'RAFT: get a serverGet request')
-        resp = self.localGet(request.key)
-        if resp.ret == kvstore_pb2.SUCCESS:
-            context.set_code(grpc.StatusCode.OK)
-        else:
-            context.set_code(grpc.StatusCode.CANCELLED)
-        return resp
-
-    def serverPut(self, request, context):
-        print(f'RAFT: get a serverPut request, <{request.key}, {request.value}>')
-        resp = self.localPut(request.key, request.value)
-        if resp.ret == kvstore_pb2.SUCCESS:
-            context.set_code(grpc.StatusCode.OK)
-        else:
-            context.set_code(grpc.StatusCode.CANCELLED)
+        self.logger.info(f'RAFT: localPut <{key}, {val}>')
         return resp
 
     def Get(self, request, context):
@@ -59,14 +43,14 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         for idx, addr in enumerate(self.addresses):
             if idx == self.id:
                 continue
-            print(f'RAFT: serverGet from {addr}')
+            self.logger.info(f'RAFT: serverGet from {addr}')
             with grpc.insecure_channel(addr) as channel:
                 stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
-                serverGetResp = stub.serverGet(kvstore_pb2.GetRequest(key=key))
+                append_resp = stub.appendEntries(kvstore_pb2.AppendRequest(type=kvstore_pb2.GET, key=key))
 
-                if serverGetResp.ret == kvstore_pb2.SUCCESS:
+                if append_resp.ret == kvstore_pb2.SUCCESS:
                     resp = kvstore_pb2.GetResponse(ret=kvstore_pb2.SUCCESS,
-                                                   value=serverGetResp.value)
+                                                   value=append_resp.value)
                     context.set_code(grpc.StatusCode.OK)
                     return resp
         context.set_code(grpc.StatusCode.CANCELLED)
@@ -79,19 +63,35 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         for idx, addr in enumerate(self.addresses):
             if idx == self.id:
                 continue
-            print(f'RAFT: serverPut <{key}, {val}> to {addr}, fail rate {self.cmserver.fail_mat[self.id][idx]}')
+            self.logger.info(f'RAFT: serverPut <{key}, {val}> to {addr}, fail rate {self.cmserver.fail_mat[self.id][idx]}')
             if random.uniform(0, 1) < self.cmserver.fail_mat[self.id][idx]:
-                print(f'RAFT[ABORTED]: serverPut <{key}, {val}> to {addr}, because of ChaosMonkey')
+                self.logger.warn(f'RAFT[ABORTED]: serverPut <{key}, {val}> to {addr}, because of ChaosMonkey')
                 continue
             with grpc.insecure_channel(addr) as channel:
                 try:
                     stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
-                    req = kvstore_pb2.PutRequest(key=key, value=val)
-                    serverPutResp = stub.serverPut(req)
+                    append_resp = stub.appendEntries(kvstore_pb2.AppendRequest(type=kvstore_pb2.PUT, key=key, value=val))
                 except Exception as e:
-                    print(e)
+                    self.logger.error(e)
         if resp.ret == kvstore_pb2.SUCCESS:
             context.set_code(grpc.StatusCode.OK)
         else:
             context.set_code(grpc.StatusCode.CANCELLED)
         return resp
+
+    def appendEntries(self, request, context):
+        req_type = request.type
+        if req_type == kvstore_pb2.HEARTBEAT:
+            self.logger.info('RAFT: get a heartbeat')
+            return kvstore_pb2.AppendResponse(ret = kvstore_pb2.SUCCESS, value='')
+        elif req_type == kvstore_pb2.GET:
+            self.logger.info(f'RAFT: get a GET log {request.key}')
+            val = self.localGet(request.key)
+            return kvstore_pb2.AppendResponse(ret = kvstore_pb2.SUCCESS, value=val)
+        elif req_type == kvstore_pb2.PUT:
+            self.logger.info(f'RAFT: get a PUT log <{request.key}, {request.value}>')
+            self.logger.critical(f'WAL: <PUT, {request.key}, {request.value}>')
+            return kvstore_pb2.AppendResponse(ret = kvstore_pb2.SUCCESS, value='')
+        else:
+            self.logger.error(f'RAFT: unknown entry')
+            return kvstore_pb2.AppendResponse(ret = kvstore_pb2.FAILURE, value='')

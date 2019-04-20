@@ -5,8 +5,6 @@ package kvstore;
 service KeyValueStore {
     rpc Get(GetRequest) returns (GetResponse) {}
     rpc Put(PutRequest) returns (PutResponse) {}
-    rpc serverPut(PutRequest) returns (PutResponse) {}
-    rpc serverGet(GetRequest) returns (GetResponse) {}
     rpc appendEntries(AppendRequest) returns (AppendResponse) {}
 }
 
@@ -48,4 +46,5 @@ message AppendRequest {
 
 message AppendResponse {
     ReturnCode ret = 1;
+    string value = 2;
 }
