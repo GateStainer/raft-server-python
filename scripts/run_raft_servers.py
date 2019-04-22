@@ -35,7 +35,7 @@ def gen_run_script(server_list_file, template_file, remote, no_exec, pem_file, s
                     script += f'      - rsync -r -v -a --delete -P -e "ssh -i {pem_file}" ./scripts/  ubuntu@{s["address"]}:/home/ubuntu/raft/scripts\n'
                 script += f'      - {remote_exec} \"cd /home/ubuntu/raft && ./scripts/aws_start_server.sh 0.0.0.0:{s["port"]} {s["id"]}\"\n'
         else:
-            script += f'    - reset && python src/raft.py {s["address"]}:{s["port"]} --id {s["id"]} server-list.csv\n'
+            script += f'    - reset && python src/raft.py {s["address"]}:{s["port"]} --id {s["id"]} --server_list_file server-list.csv\n'
     with open('launch_raft.yaml', 'w') as file:
         file.write(script)
     if not no_exec:

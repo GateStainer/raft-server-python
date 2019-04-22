@@ -1,5 +1,7 @@
 # README
 
+Run `gen_proto.sh` to generate python files from `*.proto`
+
 1. Local execution
     - Modify `server-list.csv`
     - `python scripts/run_raft_servers.py`
