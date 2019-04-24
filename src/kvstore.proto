@@ -6,6 +6,7 @@ service KeyValueStore {
     rpc Get(GetRequest) returns (GetResponse) {}
     rpc Put(PutRequest) returns (PutResponse) {}
     rpc appendEntries(AppendRequest) returns (AppendResponse) {}
+    rpc requestVote(VoteRequest) returns(VoteResponse){}
 }
 
 // You'll likely need to define more specific return codes than these!
@@ -38,13 +39,35 @@ enum AppendType {
     PUT = 2;
 }
 
+message LogEntry {
+    int32 term;
+    PutRequest log;
+}
+
 message AppendRequest {
-    AppendType type = 1;
-    string key = 2;
-    string value = 3;
+    int32 term = 1;
+    int32 leaderID = 2;
+    int32 prevLogIndex = 3;
+    int32 prevLogTerm = 4;
+    repeated LogEntry entries = 5;
+    int32 leaderCommit = 6;
+    //should include incoming server id
+    int32 incServerID = 7;
 }
 
 message AppendResponse {
-    ReturnCode ret = 1;
-    string value = 2;
+    int32 term = 1;
+    bool success = 2;
+}
+
+message VoteRequest{
+    int32 term = 1;
+    int32 candidateID = 2;
+    int32 lastLogIndex = 3;
+    int32 lastLogTerm = 4;
+}
+
+message VoteResponse{
+    int32 term = 1;
+    bool voteGranted = 2;
 }

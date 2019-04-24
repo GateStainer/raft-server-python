@@ -1,5 +1,6 @@
 from kvstore import KVServer
 from chaosmonkey import CMServer
+from KThread import *
 from concurrent import futures
 import time
 import click
@@ -12,7 +13,6 @@ import logging.handlers
 import sys
 import os
 import socket
-
 
 @click.command()
 @click.argument('address', default='0.0.0.0:7000')
@@ -35,7 +35,6 @@ def start_server(address, id, server_list_file):
     wal_handler.setFormatter(logging.Formatter("[%(asctime)s - %(levelname)s]: %(message)s"))
     # WARN: this will overwrite the log
     logger.addHandler(wal_handler)
-
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     addr_list = []
     with open(server_list_file, 'r') as file:
@@ -43,12 +42,15 @@ def start_server(address, id, server_list_file):
         for row in reader:
             addr_list.append(f"{row['address']}:{row['port']}")
     kvserver = KVServer(addr_list, id)
+
     kvstore_pb2_grpc.add_KeyValueStoreServicer_to_server(
         kvserver, server
     )
     chaosmonkey_pb2_grpc.add_ChaosMonkeyServicer_to_server(
         kvserver.cmserver, server
     )
+    myThread = KThread(target = kvserver.follower, args = ())
+    myThread.start()
     server.add_insecure_port(address)
     server.start()
     logger.info(f'{socket.gethostname()}')
