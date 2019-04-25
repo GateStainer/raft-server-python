@@ -13,12 +13,18 @@ import logging.handlers
 import sys
 import os
 import socket
+import json
 
 @click.command()
 @click.argument('address', default='0.0.0.0:7000')
 @click.option('--id', type=int, default=0)
 @click.option('--server_list_file', default='server-list.csv')
-def start_server(address, id, server_list_file):
+@click.option('--server_config_file', default='server-config.txt')
+def start_server(address, id, server_list_file, server_config_file):
+    # mcip
+    # 1024*1024 = 10MB is the size
+
+    dicConfig = json.load(open(server_config_file))
     server_name = f'{id}-{address.replace(":", "-")}'
     logger = logging.getLogger('raft')
     logger.setLevel(logging.INFO)
@@ -35,12 +41,16 @@ def start_server(address, id, server_list_file):
     wal_handler.setFormatter(logging.Formatter("[%(asctime)s - %(levelname)s]: %(message)s"))
     # WARN: this will overwrite the log
     logger.addHandler(wal_handler)
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers = dicConfig["process_limits"]))
     addr_list = []
     with open(server_list_file, 'r') as file:
         reader = csv.DictReader(file)
         for row in reader:
             addr_list.append(f"{row['address']}:{row['port']}")
+
+
+
+    #
     kvserver = KVServer(addr_list, id)
 
     kvstore_pb2_grpc.add_KeyValueStoreServicer_to_server(

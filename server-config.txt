@@ -1,0 +1,1 @@
+{"request_timeout": 50, "election_timeout": 300, "key_size": 1048576, "value_size": 1048576, "process_limits": 10}
