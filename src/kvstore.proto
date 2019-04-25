@@ -40,8 +40,8 @@ enum AppendType {
 }
 
 message LogEntry {
-    int32 term;
-    PutRequest log;
+    int32 term=1;
+    PutRequest log=2;
 }
 
 message AppendRequest {
@@ -51,7 +51,7 @@ message AppendRequest {
     int32 prevLogTerm = 4;
     repeated LogEntry entries = 5;
     int32 leaderCommit = 6;
-    //should include incoming server id
+//    should have incoming server ID
     int32 incServerID = 7;
 }
 
