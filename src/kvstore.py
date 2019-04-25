@@ -92,12 +92,13 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         return resp
 
     def Get(self, request, context):
-        def getProcessResponse(append_resp):
-            if append_resp.ret == kvstore_pb2.SUCCESS:
-                resp = kvstore_pb2.GetResponse(ret=kvstore_pb2.SUCCESS,
-                                               value=append_resp.value)
-                context.set_code(grpc.StatusCode.OK)
-                return resp
+        # Asyncio implementation
+        # def getProcessResponse(append_resp):
+        #     if append_resp.ret == kvstore_pb2.SUCCESS:
+        #         resp = kvstore_pb2.GetResponse(ret=kvstore_pb2.SUCCESS,
+        #                                        value=append_resp.value)
+        #         context.set_code(grpc.StatusCode.OK)
+        #         return resp
         key = request.key
         resp = self.localGet(key)
         if resp.ret == kvstore_pb2.SUCCESS:
@@ -108,15 +109,19 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 continue
             self.logger.info(f'RAFT: serverGet from {addr}')
             with grpc.insecure_channel(addr) as channel:
+                # Asyncio implementation
+                # stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
+                # append_resp = stub.appendEntries.future(kvstore_pb2.AppendRequest(type=kvstore_pb2.GET, key=key))
+                # append_resp.add_done_callback(getProcessResponse)
                 stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
-                # append_resp = stub.appendEntries(kvstore_pb2.AppendRequest(type=kvstore_pb2.GET, key=key))
-                # if append_resp.ret == kvstore_pb2.SUCCESS:
-                #     resp = kvstore_pb2.GetResponse(ret=kvstore_pb2.SUCCESS,
-                #                                    value=append_resp.value)
-                #     context.set_code(grpc.StatusCode.OK)
-                #     return resp
-                append_resp = stub.appendEntries.future(kvstore_pb2.AppendRequest(type=kvstore_pb2.GET, key=key))
-                append_resp.add_done_callback(getProcessResponse)
+                append_resp = stub.appendEntries(kvstore_pb2.AppendRequest(
+                    type=kvstore_pb2.GET, key=key), timeout = self.requestTimeout) # timeout?
+                if append_resp.ret == kvstore_pb2.SUCCESS:
+                    resp = kvstore_pb2.GetResponse(ret=kvstore_pb2.SUCCESS,
+                                                   value=append_resp.value)
+                    context.set_code(grpc.StatusCode.OK)
+                    return resp
+
 
 
         context.set_code(grpc.StatusCode.CANCELLED)
@@ -159,8 +164,9 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             return kvstore_pb2.AppendResponse(ret = kvstore_pb2.SUCCESS, value=val)
         elif req_type == kvstore_pb2.PUT:
             #mcip
-            if random.uniform(0, 1) < self.cmserver.fail_mat[self.id][self.id]:
-                self.logger.warn(f'RAFT[ABORTED]: serverPut <{key}, {val}> to {addr}, because of ChaosMonkey')
+            if random.uniform(0, 1) < self.cmserver.fail_mat[inc_server_id][self.id]:
+                self.logger.warn(f'RAFT[ABORTED]: append entries from server <{inc_server_id}> '
+                                 f'to <{self.id}>, because of ChaosMonkey')
             else:
                 #zixuan
                 self.logger.info(f'RAFT: get a PUT log <{request.key}, {request.value}>')
@@ -176,7 +182,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         reqLastLogIndex = request.lastLogIndex
         reqLastLogTerm = request.lastLogTerm
         # self.lastApplied? or most recent commit index
-        if reqLastLogTerm <= self.currentTerm or reqLastLogIndex<self.lastApplied or self.votedFor != -1:
+        if reqLastLogTerm <= self.currentTerm or reqLastLogIndex < self.lastApplied or self.votedFor != -1:
             self.logger.info(f'RAFT: vote denied for server <{reqCandidateID}>')
             return kvstore_pb2.VoteRequest(term = self.currentTerm, voteGranted = False)
         else:
@@ -200,9 +206,9 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                         vote_request, timeout = self.requestTimeout) # timeout keyword ok?
                     if request_vote_response.voteGranted:
                         vote_count += 1
-                        self.logger.critical(f'RAFT: vote received from <{idx}>')
+                        self.logger.critical(f'RAFT: initiateVote: vote received from <{idx}>')
                     else:
-                        self.logger.info(f'RAFT: vote rejected from <{idx}>')
+                        self.logger.info(f'RAFT: initiateVote: vote rejected from <{idx}>')
             except Exception as e:
                 self.logger.error(e)
 
