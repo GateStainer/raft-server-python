@@ -5,6 +5,7 @@ import random
 import logging
 import json
 import time
+import os
 import threading
 from KThread import *
 from chaosmonkey import CMServer
@@ -49,7 +50,11 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
 
     def load(self):
         # TODO: load persistent state from json file
-        if self.persistent_file:
+        self.currentTerm = 0
+        self.votedFor = -1
+        # each entry in the list contains (term, <key, value>)
+        self.log_entries = []
+        if os.path.isfile(self.persistent_file):
             with open(self.persistent_file, 'r') as f:
                 datastore = json.load(f)
                 self.currentTerm = datastore["currentTerm"]
@@ -59,12 +64,10 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
 
     def save(self):
         #TODO: save persistent state to json file
-        # If the file name exists, write a JSON string into the file.
-        if self.persistent_file:
-            # Writing JSON data
-            persistent = {"currentTerm": self.currentTerm, "votedFor": self.votedFor, "log_entries": self.log_entries};
-            with open(self.persistent_file, 'w') as f:
-                json.dump(persistent, f)
+        # Writing JSON data
+        persistent = {"currentTerm": self.currentTerm, "votedFor": self.votedFor, "log_entries": self.log_entries};
+        with open(self.persistent_file, 'w') as f:
+            json.dump(persistent, f)
 
     def follower(self):
         print('Running as a follower')
@@ -114,9 +117,38 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     print(f'vote received from <{idx}>')
                 else:
                     print(f'vote rejected from <{idx}>')
+                # if I receive voteGranted
+                if request_vote_response.voteGranted:
+                    if self.role == KVServer.candidate:
+                        self.numVotes += 1
+                        if self.numVotes >= self.majority:
+                            self.role = KVServer.leader
+                            print("Become Leader")
+                            if self.election.is_alive():
+                                self.election.kill()
+                            self.follower_state.kill()
+                            self.leader_state = KThread(target = self.leader, args = ())
+                            self.leader_state.start()
+                else:
+                    # discover higher term
+                    if request_vote_response.term > self.currentTerm:
+                        self.currentTerm = request_vote_response.term
+                        self.save()
+                        self.step_down()
+
         except Exception as e:
             self.logger.error(e)
 
+    # Leader or Candidate steps down to follower
+    def step_down(self):
+        pass
+
+    def leader(self):
+        pass
+
+    def run(self):
+        self.follower_state = KThread(target = self.follower, args = ())
+        self.follower_state.start()
 
     #Define gRPC methods
 
@@ -229,7 +261,31 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         reqLastLogIndex = request.lastLogIndex
         reqLastLogTerm = request.lastLogTerm
         print(f'Receive request vote from <{reqCandidateID}>')
-        return kvstore_pb2.VoteResponse(term = self.currentTerm, voteGranted = True)
+
+        # TODO: Update requestVote Rules
+        if reqTerm < self.currentTerm:
+            votegranted = False
+        elif reqTerm == self.currentTerm:
+            # TODO: Add lock here
+            if reqLastLogTerm >= self.lastLogTerm and reqLastLogIndex >= self.lastLogIndex \
+                and (self.votedFor == -1 or self.votedFor == reqCandidateID):
+                votegranted = True
+                self.votedFor = reqCandidateID
+                self.save()
+            else:
+                votegranted = False
+        # Find higher term in RequestVote message
+        else:
+            self.currentTerm = reqTerm
+            self.save()
+            self.step_down()
+            if reqLastLogTerm >= self.lastLogTerm and reqLastLogIndex >= self.lastLogIndex:
+                votegranted = True
+                self.votedFor = reqCandidateID
+                self.save()
+            else:
+                votegranted = False
+        return kvstore_pb2.VoteResponse(term = self.currentTerm, voteGranted = votegranted)
         '''
         # self.lastApplied? or most recent commit index
         if reqLastLogTerm <= self.currentTerm or reqLastLogIndex < self.lastApplied or self.votedFor != -1:
