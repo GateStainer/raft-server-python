@@ -59,10 +59,10 @@ def start_server(address, id, server_list_file, server_config_file):
     chaosmonkey_pb2_grpc.add_ChaosMonkeyServicer_to_server(
         kvserver.cmserver, server
     )
-    myThread = KThread(target = kvserver.follower, args = ())
-    myThread.start()
     server.add_insecure_port(address)
     server.start()
+    myThread = KThread(target = kvserver.follower, args = ())
+    myThread.start()
     logger.info(f'{socket.gethostname()}')
     logger.info(f'Server [{server_name}] listening {address}')
     try:
