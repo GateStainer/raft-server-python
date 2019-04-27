@@ -7,6 +7,7 @@ service KeyValueStore {
     rpc Put(PutRequest) returns (PutResponse) {}
     rpc appendEntries(AppendRequest) returns (AppendResponse) {}
     rpc requestVote(VoteRequest) returns(VoteResponse){}
+//    rpc inspIntServState(InspectRequest) returns(InspectResponse){}
 }
 
 // You'll likely need to define more specific return codes than these!
@@ -71,3 +72,19 @@ message VoteResponse{
     int32 term = 1;
     bool voteGranted = 2;
 }
+
+//message InspectRequest{
+//
+//}
+//
+//message InspectResponse{
+//    int32 requestTimeout = 1;
+//    int32 electionTimeout = 2;
+//    int32 id = 3;
+//    int32 role = 4;
+//    int32 leader = 5;
+//    int32 commitIndex = 6;
+//    int32 lastApplied = 7;
+//    int32 lastLogIndex = 8;
+//    int32 lastLogTerm = 9;
+//}

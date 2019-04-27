@@ -15,8 +15,12 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
     follower = 0
     candidate = 1
     leader = 2
-    def __init__(self, addresses: list, id: int):
-        self.requestTimeout = 0.3
+    def __init__(self, addresses: list, id: int, server_config: dict):
+        self.requestTimeout = server_config["request_timeout"]
+        self.electionTimeout = server_config["election_timeout"]
+        self.keySizeLimit = server_config["key_size"]
+        self.valSizeLimit = server_config["value_size"]
+
         self.id = id
         self.persistent_file = 'config-%d' % self.id
         # load persistent state from json file
@@ -135,7 +139,6 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                         self.currentTerm = request_vote_response.term
                         self.save()
                         self.step_down()
-
         except Exception as e:
             self.logger.error(e)
 

@@ -24,7 +24,7 @@ def start_server(address, id, server_list_file, server_config_file):
     # mcip
     # 1024*1024 = 10MB is the size
 
-    dicConfig = json.load(open(server_config_file))
+    server_config = json.load(open(server_config_file))
     server_name = f'{id}-{address.replace(":", "-")}'
     logger = logging.getLogger('raft')
     logger.setLevel(logging.INFO)
@@ -51,7 +51,7 @@ def start_server(address, id, server_list_file, server_config_file):
 
 
     #
-    kvserver = KVServer(addr_list, id)
+    kvserver = KVServer(addr_list, id, server_config)
 
     kvstore_pb2_grpc.add_KeyValueStoreServicer_to_server(
         kvserver, server
