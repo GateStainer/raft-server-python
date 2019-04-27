@@ -5,7 +5,9 @@ import random
 import logging
 import json
 import time
+import os
 import threading
+from KThread import *
 from chaosmonkey import CMServer
 
 
@@ -14,12 +16,13 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
     candidate = 1
     leader = 2
     def __init__(self, addresses: list, id: int):
+        self.requestTimeout = 0.3
         self.id = id
         self.persistent_file = 'config-%d' % self.id
         # load persistent state from json file
         self.load()
-        # volatile state on all: commitIndex, lastApplied
-        # 0 for follower, 1 for candidate, 2 for leader
+
+        #volatile state
         self.role = KVServer.follower
         self.leaderID = 0
         self.commitIndex = 0
@@ -30,32 +33,28 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 self.peers.append(idx)
         self.majority = len(self.peers) / 2 + 1
         self.request_votes = self.peers[:]
-        self.numVotes = 0
-        self.oldVotes = 0
         self.newVotes = 0
+        self.lastLogIndex = 0
+        self.lastLogTerm = 0
+        self.addresses = addresses # number of nodes implied here
 
         #TODO: move these to leader election
         # volatile state on leaders: nextIndex[], matchIndex[]
         self.nextIndex = []
         self.matchIndex =[] #known commit index on servers
 
-        self.leader = -1 # leader = index in addresses
-        self.requestTimeout = -1
-        self.addresses = addresses # number of nodes implied here
         self.cmserver = CMServer(num_server=len(addresses))
         self.logger = logging.getLogger('raft')
         self.logger.info('Initial ChaosMonkey matrix:')
         print(self.cmserver)
 
-    def follower(self):
-        print('Running as a follower')
-        self.role = KVServer.follower
-
-        # TODO: Implement follower behaviour
-
     def load(self):
         # TODO: load persistent state from json file
-        if self.persistent_file:
+        self.currentTerm = 0
+        self.votedFor = -1
+        # each entry in the list contains (term, <key, value>)
+        self.log_entries = []
+        if os.path.isfile(self.persistent_file):
             with open(self.persistent_file, 'r') as f:
                 datastore = json.load(f)
                 self.currentTerm = datastore["currentTerm"]
@@ -63,15 +62,95 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 # each entry in the list contains (term, <key, value>)
                 self.log_entries = datastore["log_entries"]
 
-
     def save(self):
         #TODO: save persistent state to json file
-        # If the file name exists, write a JSON string into the file.
-        if self.persistent_file:
-            # Writing JSON data
-            persistent = {"currentTerm": self.currentTerm, "votedFor": self.votedFor, "log_entries": self.log_entries};
-            with open(self.persistent_file, 'w') as f:
-                json.dump(persistent, f)
+        # Writing JSON data
+        persistent = {"currentTerm": self.currentTerm, "votedFor": self.votedFor, "log_entries": self.log_entries};
+        with open(self.persistent_file, 'w') as f:
+            json.dump(persistent, f)
+
+    def follower(self):
+        print('Running as a follower')
+        self.role = KVServer.follower
+        self.last_update = time.time()
+        election_timeout = 5 * random.random() + 5
+        while time.time() - self.last_update <= election_timeout:
+            pass
+        self.start_election()
+        while True:
+            self.last_update = time.time()
+            election_timeout = 5 * random.random() + 5
+            while time.time() - self.last_update <= election_timeout:
+                pass
+            if self.election.is_alive():
+                self.election.kill()
+            self.start_election()
+
+    def start_election(self):
+        print("Start leader election")
+        self.role = KVServer.candidate
+        self.currentTerm += 1
+        self.votedFor = self.id
+        self.save()
+        self.numVotes = 1
+        self.election = KThread(target = self.initiateVote, args = ())
+        self.election.start()
+
+    def initiateVote(self):
+        for idx, addr in enumerate(self.addresses):
+            if idx == self.id:
+                continue
+            election_thread = KThread(target = self.thread_election, args = (idx, addr, ))
+            election_thread.start()
+
+    def thread_election(self, idx, addr):
+        vote_request = kvstore_pb2.VoteRequest(term = self.currentTerm, candidateID = self.id,
+                                               lastLogIndex = self.lastLogIndex, lastLogTerm = self.lastLogTerm)
+        try:
+            with grpc.insecure_channel(addr) as channel:
+                stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
+                print(f'Send vote request to <{idx}>')
+                # Timeout error
+                request_vote_response = stub.requestVote(
+                    vote_request, timeout = self.requestTimeout) # timeout keyword ok?
+                if request_vote_response.voteGranted:
+                    print(f'vote received from <{idx}>')
+                else:
+                    print(f'vote rejected from <{idx}>')
+                # if I receive voteGranted
+                if request_vote_response.voteGranted:
+                    if self.role == KVServer.candidate:
+                        self.numVotes += 1
+                        if self.numVotes >= self.majority:
+                            self.role = KVServer.leader
+                            print("Become Leader")
+                            if self.election.is_alive():
+                                self.election.kill()
+                            self.follower_state.kill()
+                            self.leader_state = KThread(target = self.leader, args = ())
+                            self.leader_state.start()
+                else:
+                    # discover higher term
+                    if request_vote_response.term > self.currentTerm:
+                        self.currentTerm = request_vote_response.term
+                        self.save()
+                        self.step_down()
+
+        except Exception as e:
+            self.logger.error(e)
+
+    # Leader or Candidate steps down to follower
+    def step_down(self):
+        pass
+
+    def leader(self):
+        pass
+
+    def run(self):
+        self.follower_state = KThread(target = self.follower, args = ())
+        self.follower_state.start()
+
+    #Define gRPC methods
 
     def localGet(self, key):
         resp = kvstore_pb2.GetResponse()
@@ -182,6 +261,33 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         reqCandidateID = request.candidateID
         reqLastLogIndex = request.lastLogIndex
         reqLastLogTerm = request.lastLogTerm
+        print(f'Receive request vote from <{reqCandidateID}>')
+
+        # TODO: Update requestVote Rules
+        if reqTerm < self.currentTerm:
+            votegranted = False
+        elif reqTerm == self.currentTerm:
+            # TODO: Add lock here
+            if reqLastLogTerm >= self.lastLogTerm and reqLastLogIndex >= self.lastLogIndex \
+                and (self.votedFor == -1 or self.votedFor == reqCandidateID):
+                votegranted = True
+                self.votedFor = reqCandidateID
+                self.save()
+            else:
+                votegranted = False
+        # Find higher term in RequestVote message
+        else:
+            self.currentTerm = reqTerm
+            self.save()
+            self.step_down()
+            if reqLastLogTerm >= self.lastLogTerm and reqLastLogIndex >= self.lastLogIndex:
+                votegranted = True
+                self.votedFor = reqCandidateID
+                self.save()
+            else:
+                votegranted = False
+        return kvstore_pb2.VoteResponse(term = self.currentTerm, voteGranted = votegranted)
+        '''
         # self.lastApplied? or most recent commit index
         if reqLastLogTerm <= self.currentTerm or reqLastLogIndex < self.lastApplied or self.votedFor != -1:
             self.logger.info(f'RAFT: vote denied for server <{reqCandidateID}>')
@@ -192,26 +298,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             self.currentTerm = reqTerm
             return kvstore_pb2.VoteRequest(term = self.currentTerm, voteGranted = True)
 
-    def initiateVote(self):
-        vote_request = kvstore_pb2.VoteRequest(term = self.currentTerm+1, candidateID = self.id,
-                                               lastLogIndex = self.lastApplied, lastLogTerm = self.currentTerm)
-        vote_count = 1
-        for idx, addr in enumerate(self.addresses):
-            if idx == self.id:
-                continue
-            try:
-                with grpc.insecure_channel(addr) as channel:
-                    stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
-                    # Timeout error
-                    request_vote_response = stub.requestVote(
-                        vote_request, timeout = self.requestTimeout) # timeout keyword ok?
-                    if request_vote_response.voteGranted:
-                        vote_count += 1
-                        self.logger.critical(f'RAFT: initiateVote: vote received from <{idx}>')
-                    else:
-                        self.logger.info(f'RAFT: initiateVote: vote rejected from <{idx}>')
-            except Exception as e:
-                self.logger.error(e)
+        '''
 
 
 
