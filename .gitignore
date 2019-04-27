@@ -1,8 +1,17 @@
+*.xml
+backup
+*.yaml
+.gitignore
+.idea/workspace.xml
+.DS_Store
+src/.ipynb_checkpoints/
+.idea/*
 launch_raft.yaml
 src/__pycache__/*
 .*
 config*
 .idea/*
+*.xml
 
 # Created by https://www.gitignore.io/api/c,c++,python,visualstudiocode
 # Edit at https://www.gitignore.io/?templates=c,c++,python,visualstudiocode
