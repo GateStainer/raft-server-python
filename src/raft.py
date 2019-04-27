@@ -41,7 +41,7 @@ def start_server(address, id, server_list_file, server_config_file):
     wal_handler.setFormatter(logging.Formatter("[%(asctime)s - %(levelname)s]: %(message)s"))
     # WARN: this will overwrite the log
     logger.addHandler(wal_handler)
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers = dicConfig["process_limits"]))
+    server = grpc.server(futures.ThreadPoolExecutor())
     addr_list = []
     with open(server_list_file, 'r') as file:
         reader = csv.DictReader(file)
