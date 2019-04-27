@@ -93,6 +93,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
 
     def Get(self, request, context):
         # Asyncio implementation
+        # https://github.com/grpc/grpc/issues/16329
         # def getProcessResponse(append_resp):
         #     if append_resp.ret == kvstore_pb2.SUCCESS:
         #         resp = kvstore_pb2.GetResponse(ret=kvstore_pb2.SUCCESS,
