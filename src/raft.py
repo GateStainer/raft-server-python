@@ -48,9 +48,6 @@ def start_server(address, id, server_list_file, server_config_file):
         for row in reader:
             addr_list.append(f"{row['address']}:{row['port']}")
 
-
-
-    #
     kvserver = KVServer(addr_list, id)
 
     kvstore_pb2_grpc.add_KeyValueStoreServicer_to_server(
@@ -60,7 +57,9 @@ def start_server(address, id, server_list_file, server_config_file):
         kvserver.cmserver, server
     )
     server.add_insecure_port(address)
+    # Register gRPC listener
     server.start()
+    # Initially run as a follower
     kvserver.run()
     logger.info(f'{socket.gethostname()}')
     logger.info(f'Server [{server_name}] listening {address}')

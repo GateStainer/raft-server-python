@@ -37,12 +37,6 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.lastLogIndex = 0
         self.lastLogTerm = 0
         self.addresses = addresses # number of nodes implied here
-
-        #TODO: move these to leader election
-        # volatile state on leaders: nextIndex[], matchIndex[]
-        self.nextIndex = []
-        self.matchIndex =[] #known commit index on servers
-
         self.cmserver = CMServer(num_server=len(addresses))
         self.logger = logging.getLogger('raft')
         self.logger.info('Initial ChaosMonkey matrix:')
@@ -73,20 +67,24 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         print('Running as a follower')
         self.role = KVServer.follower
         self.last_update = time.time()
+        # TODO: Change election timeout here
         election_timeout = 5 * random.random() + 5
         while time.time() - self.last_update <= election_timeout:
             pass
         self.start_election()
         while True:
             self.last_update = time.time()
+            # TODO: Change election timeout here
             election_timeout = 5 * random.random() + 5
             while time.time() - self.last_update <= election_timeout:
                 pass
+            # kill old election thread
             if self.election.is_alive():
                 self.election.kill()
             self.start_election()
 
     def start_election(self):
+        # Create a new thread for leader election
         print("Start leader election")
         self.role = KVServer.candidate
         self.currentTerm += 1
@@ -100,6 +98,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         for idx, addr in enumerate(self.addresses):
             if idx == self.id:
                 continue
+            # Create a thread for each request vote
             election_thread = KThread(target = self.thread_election, args = (idx, addr, ))
             election_thread.start()
 
@@ -118,15 +117,18 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 else:
                     print(f'vote rejected from <{idx}>')
                 # if I receive voteGranted
+                # TODO: Add lock here to consider concurrency
                 if request_vote_response.voteGranted:
                     if self.role == KVServer.candidate:
                         self.numVotes += 1
-                        if self.numVotes >= self.majority:
+                        if self.numVotes == self.majority:
                             self.role = KVServer.leader
                             print("Become Leader")
+                            # kill election and follower thread
                             if self.election.is_alive():
                                 self.election.kill()
                             self.follower_state.kill()
+                            # Create a thread for leader thread
                             self.leader_state = KThread(target = self.leader, args = ())
                             self.leader_state.start()
                 else:
@@ -141,12 +143,80 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
 
     # Leader or Candidate steps down to follower
     def step_down(self):
-        pass
+        if self.role == KVServer.candidate:
+            print("Candidate step down when higher term")
+            self.election.kill()
+            self.last_update = time.time()
+            self.role = KVServer.follower
+        elif self.role == KVServer.leader:
+            self.leader_state.kill()
+            self.follower_state = KThread(target = self.follower, args = ())
+            self.follower_state.start()
 
     def leader(self):
-        pass
+        print("Running as a leader")
+        self.role = KVServer.leader
+        # volatile state on leaders: nextIndex[], matchIndex[]
+        self.nextIndex = {}
+        self.matchIndex ={} #known commit index on servers
+        for peer in self.peers:
+            self.nextIndex[peer] = len(self.log_entries) + 1
+            self.matchIndex[peer] = 0
+        self.append_entries()
+
+    # Leader sends append_entry message as log replication and heart beat
+    def append_entries(self):
+        while True:
+            for idx, addr in enumerate(self.addresses):
+                if idx == self.id:
+                    continue
+                # Create a thread for each append_entry message
+                append_thread = KThread(target = self.thread_append_entry, args = (idx, addr, ))
+                append_thread.start()
+            # heart beat
+            time.sleep(0.5)
+
+    def thread_append_entry(self, idx, addr):
+        append_request = kvstore_pb2.AppendRequest()
+        if len(self.log_entries) >= self.nextIndex[idx]:
+            prevLogIndex = self.nextIndex[idx] - 1
+            if prevLogIndex != 0:
+                prevLogTerm = self.log_entries[prevLogIndex-1].term
+            else:
+                prevLogTerm = 0
+            entries = [self.log_entries[self.nextIndex[idx]-1]]
+        else:
+            entries = []
+            prevLogIndex = len(self.log_entries)
+            if prevLogIndex != 0:
+                prevLogTerm = self.log_entries[prevLogIndex-1].term
+            else:
+                prevLogTerm = 0
+        append_request.term = self.currentTerm
+        append_request.leaderID = self.id
+        append_request.prevLogIndex = prevLogIndex
+        append_request.prevLogTerm = prevLogTerm
+        append_request.leaderCommit = self.commitIndex
+        append_request.incServerID = self.id
+        for temp_entry in entries:
+            entry = append_request.entries.add()
+            entry.term = temp_entry.term
+            entry.log.key = temp_entry.log.key
+            entry.log.value = temp_entry.log.value
+        try:
+            with grpc.insecure_channel(addr) as channel:
+                stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
+                print(f'Send append_entry to <{idx}>')
+                append_entry_response = stub.appendEntries(
+                    append_request, timeout = self.requestTimeout)
+                # TODO: Implement append entry response
+        except Exception as e:
+            self.logger.error(e)
+
+
 
     def run(self):
+        # Create a thread to run as follower
         self.follower_state = KThread(target = self.follower, args = ())
         self.follower_state.start()
 
@@ -232,6 +302,10 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         return resp
 
     def appendEntries(self, request, context):
+        return kvstore_pb2.AppendResponse(term = self.currentTerm, success = True)
+        pass
+        # TODO: Implement appendEntries gRPC
+        '''
         inc_server_id = request.incServerID
         req_type = request.type
         if req_type == kvstore_pb2.HEARTBEAT:
@@ -254,7 +328,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         else:
             self.logger.error(f'RAFT: unknown entry')
             return kvstore_pb2.AppendResponse(ret = kvstore_pb2.FAILURE, value='')
-
+        '''
     def requestVote(self, request, context):
         reqTerm = request.term
         reqCandidateID = request.candidateID
