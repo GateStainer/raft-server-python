@@ -213,6 +213,30 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 append_entry_response = stub.appendEntries(
                     append_request, timeout = self.requestTimeout)
                 # TODO: Implement append entry response
+                if not append_entry_response.success:
+                    if append_entry_response.term > self.currentTerm:
+                        self.currentTerm = append_entry_response.term
+                        self.save()
+                        self.step_down()
+                    else:
+                        self.nextIndex[idx] -= 1
+                else:
+                    if self.nextIndex[idx] <= len(self.log_entries) and \
+                            append_entry_response.matchIndex > self.matchIndex[idx]:
+                        self.matchIndex[idx] = append_entry_response.matchIndex
+                        self.nextIndex[idx] += 1
+                    if self.commitIndex < max(self.matchIndex.values()):
+                        start = self.commitIndex + 1
+                        for N in range(start, max(self.matchIndex.values()) + 1):
+                            compare = 1
+                            for key, item in self.matchIndex.items():
+                                if key in self.peers and item >= N:
+                                    compare += 1
+                            majority = (len(self.peers) + 1)/2 + 1
+                            if compare == self.majority and self.log_entries[N-1].term == self.currentTerm:
+                                self.commitIndex = N
+
+
         except Exception as e:
             self.logger.error(e)
 
@@ -306,6 +330,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         return resp
 
     def appendEntries(self, request, context):
+        
         return kvstore_pb2.AppendResponse(term = self.currentTerm, success = True)
         pass
         # TODO: Implement appendEntries gRPC
