@@ -35,6 +35,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.commitIndex = 0
         self.lastApplied = 0
         self.peers = []
+        self.nextLogIndDic = {}
+        self.nextCommitIndDic = {}
 
         # current state
         self.curEleTimeout = float(random.randint(self.electionTimeout/2, self.electionTimeout)/1000) # in sec
@@ -105,30 +107,26 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.election = KThread(target = self.initiateVote, args = ())
         self.election.start()
 
-    def requestVote(self, request, context): # receiving side
+    def requestVote(self, request, context): # receiving vote request
         reqTerm = request.term
         reqCandidateID = request.candidateID
         reqLastLogIndex = request.lastLogIndex
         reqLastLogTerm = request.lastLogTerm
         print(f'Receive request vote from <{reqCandidateID}>')
         # TODO: Update requestVote Rules
-        if reqTerm < self.currentTerm or reqLastLogTerm < self.lastLogTerm or reqLastLogIndex < self.lastLogIndex or \
+        if reqTerm <= self.currentTerm or reqLastLogTerm < self.lastLogTerm or reqLastLogIndex < self.lastLogIndex or \
                 (self.votedFor != -1 and self.votedFor != reqCandidateID):
             votegranted = False
-        elif reqTerm == self.currentTerm:
-            # TODO: Add lock here
-            votegranted = True
-            self.votedFor = reqCandidateID
-            self.save()
         # Find higher term in RequestVote message
         else:
+            votegranted = True
             self.currentTerm = reqTerm
             self.save()
             self.step_down()
-            votegranted = True
             self.votedFor = reqCandidateID
             self.save()
-        return kvstore_pb2.VoteResponse(term = self.currentTerm, voteGranted = votegranted)
+        return kvstore_pb2.VoteResponse(serverID = self.id, term = self.currentTerm, reqLastLogIndex = \
+            self.lastLogIndex, lastCommitIndex = self.lastApplied, voteGranted = votegranted)
             # self.logger.info(f'RAFT: vote denied for server <{reqCandidateID}>')
             # self.logger.critical(f'RAFT: voted for <{reqCandidateID}>')
 
@@ -148,15 +146,14 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
                 print(f'Send vote request to <{idx}>')
                 # Timeout error
-                request_vote_response = stub.requestVote(
+                req_vote_resp = stub.requestVote(
                     vote_request, timeout = self.requestTimeout) # timeout keyword ok?
-                if request_vote_response.voteGranted:
-                    print(f'vote received from <{idx}>')
-                else:
-                    print(f'vote rejected from <{idx}>')
                 # if I receive voteGranted
                 # TODO: Add lock here to consider concurrency
-                if request_vote_response.voteGranted:
+                self.nextLogIndDic[req_vote_resp.serverID] = req_vote_resp.lastLogIndex
+                self.nextCommitIndDic[req_vote_resp.serverID] = req_vote_resp.lastCommitIndex
+                if req_vote_resp.voteGranted:
+                    print(f'vote received from <{idx}>')
                     if self.role == KVServer.candidate:
                         self.numVotes += 1
                         if self.numVotes == self.majority:
@@ -170,9 +167,10 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                             self.leader_state = KThread(target = self.leader, args = ())
                             self.leader_state.start()
                 else:
+                    print(f'vote rejected from <{idx}>')
                     # discover higher term
-                    if request_vote_response.term > self.currentTerm:
-                        self.currentTerm = request_vote_response.term
+                    if req_vote_resp.term > self.currentTerm:
+                        self.currentTerm = req_vote_resp.term
                         self.save()
                         self.step_down()
         except Exception as e:
@@ -194,8 +192,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         print("Running as a leader")
         self.role = KVServer.leader
         # volatile state on leaders: nextIndex[], matchIndex[]
-        self.nextIndex = {}
-        self.matchIndex ={} #known commit index on servers
+        # self.nextIndex = {}
+        # self.matchIndex ={} #known commit index on servers
         for peer in self.peers:
             self.nextIndex[peer] = len(self.log_entries) + 1
             self.matchIndex[peer] = 0
@@ -217,16 +215,14 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         append_request = kvstore_pb2.AppendRequest()
         if len(self.log_entries) >= self.nextIndex[idx]:
             prevLogIndex = self.nextIndex[idx] - 1
-            if prevLogIndex != 0:
-                prevLogTerm = self.log_entries[prevLogIndex-1].term
-            else:
-                prevLogTerm = 0
-            entries = [self.log_entries[self.nextIndex[idx]-1]]
+            prevLogTerm = 0
+            if prevLogIndex != 0: prevLogTerm = self.log_entries[prevLogIndex-1][0]
+            entries = self.log_entries[self.nextIndex[idx]-1][1:]
         else:
             entries = []
             prevLogIndex = len(self.log_entries)
             if prevLogIndex != 0:
-                prevLogTerm = self.log_entries[prevLogIndex-1].term
+                prevLogTerm = self.log_entries[prevLogIndex-1][0]
             else:
                 prevLogTerm = 0
         append_request.term = self.currentTerm
@@ -237,9 +233,10 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         append_request.incServerID = self.id
         for temp_entry in entries:
             entry = append_request.entries.add()
-            entry.term = temp_entry.term
-            entry.log.key = temp_entry.log.key
-            entry.log.value = temp_entry.log.value
+            entry.term = temp_entry
+            # entry.term = temp_entry.term
+            # entry.log.key = temp_entry.log.key
+            # entry.log.value = temp_entry.log.value
         try:
             with grpc.insecure_channel(addr) as channel:
                 stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
@@ -263,7 +260,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             if req_type == kvstore_pb2.HEARTBEAT:
                 self.logger.info('RAFT: get a heartbeat')
                 return kvstore_pb2.AppendResponse(ret = kvstore_pb2.SUCCESS, value='')
-            # elif req_type == kvstore_pb2.GET: #TODO: no need to get? but can use readWithKey
+            # elif req_type == kvstore_pb2.GET: #TODO: no need to get here
             #     self.logger.info(f'RAFT: get a GET log {request.key}')
             #     val = self.localGet(request.key)
             #     return kvstore_pb2.AppendResponse(ret = kvstore_pb2.SUCCESS, value=val)
@@ -271,7 +268,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 # commit to disk
                 if request.leaderCommit > self.commitIndex:
                     self.commitIndex = request.leaderCommit
-                    KThread(target = self.writeToDisk, args = ())
+                    appendEntTh = KThread(target = self.writeToDisk, args = ())
+                    appendEntTh.start()
                 self.logger.info(f'RAFT: get a PUT log <{request.key}, {request.value}>')
                 self.logger.critical(f'WAL: <PUT, {request.key}, {request.value}>')
                 return kvstore_pb2.AppendResponse(ret = kvstore_pb2.SUCCESS, value='')

@@ -42,7 +42,8 @@ enum AppendType {
 
 message LogEntry {
     int32 term=1;
-    PutRequest log=2;
+    string key =2;
+    string val =3;
 }
 
 message AppendRequest {
@@ -70,8 +71,11 @@ message VoteRequest{
 }
 
 message VoteResponse{
-    int32 term = 1;
-    bool voteGranted = 2;
+    int32 serverID = 1;
+    int32 term = 2;
+    int32 lastLogIndex = 3;
+    int32 lastCommitIndex = 4;
+    bool voteGranted = 5;
 }
 
 //message InspectRequest{
