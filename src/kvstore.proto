@@ -59,7 +59,6 @@ message AppendRequest {
 
 message AppendResponse {
     int32 term = 1;
-    int32
     bool success = 2;
     int32 matchIndex = 3;
 }
