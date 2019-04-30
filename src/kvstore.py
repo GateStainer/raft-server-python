@@ -146,7 +146,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                         self.save()
                         self.step_down()
         except Exception as e:
-            self.logger.error(e)
+            pass
 
     # Leader or Candidate steps down to follower
     def step_down(self):
@@ -205,11 +205,13 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         append_request.prevLogTerm = prevLogTerm
         append_request.leaderCommit = self.commitIndex
         append_request.incServerID = self.id
+
         for temp_entry in entries:
             entry = append_request.entries.add()
             entry.term = temp_entry[0]
             entry.key = temp_entry[1]
             entry.val = temp_entry[2]
+
         try:
             with grpc.insecure_channel(addr) as channel:
                 stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
@@ -236,14 +238,11 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                             for key, item in self.matchIndex.items():
                                 if key in self.peers and item >= N:
                                     compare += 1
-                            majority = (len(self.peers) + 1)/2 + 1
                             if compare == self.majority and self.log_entries[N-1].term == self.currentTerm:
                                 for idx in range(self.commitIndex+1, N+1):
                                     self.storage[self.log_entries[idx-1].key] = self.log_entries[idx-1].value
                                     self.save()
                                 self.commitIndex = N
-
-
         except Exception as e:
             self.logger.error(e)
 
@@ -409,7 +408,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     self.storage[self.log_entries[idx-1].key] = self.log_entries[idx-1].value
 
 
-        return kvstore_pb2.AppendResponse(term = self.currentTerm, success = True, matchIndex = matchIndex)
+        return kvstore_pb2.AppendResponse(term = self.currentTerm, success = success, matchIndex = matchIndex)
         pass
         # TODO: Implement appendEntries gRPC
         '''
