@@ -29,7 +29,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.id = id
         self.persistent_file = 'config-%d' % self.id
         self.diskData = "data-%d.pkl" % self.id
-        self.load()
+        # Todo: will use load later
+        # self.load()
         self.storage = {}
         # Config
         self.requestTimeout = server_config["request_timeout"]  # in ms
@@ -57,6 +58,11 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.lastLogTerm = 0
         self.addresses = addresses  # number of nodes implied here
         self.cmserver = CMServer(num_server=len(addresses))
+        logging.basicConfig(filename='logger-%d' % self.id,
+                            filemode='a',
+                            format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                            datefmt='%H:%M:%S',
+                            level=logging.DEBUG)
         self.logger = logging.getLogger('raft')
         self.logger.info('Initial ChaosMonkey matrix:')
         print(self.cmserver)
@@ -64,6 +70,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         ### Volatile state on leaders
         self.nextIndex = [0] * len(addresses)  # index of next log entry to send to that server
         self.matchIndex = [-1] * len(addresses)  # highest log entry known to be replicated
+
+        self.debug1 = 0
 
     def load(self):
         self.votedFor = -1
@@ -80,7 +88,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             json.dump(persistent, f)
 
     def follower(self):
-        print('Running as a follower')
+        self.logger.critical(f'RAFT: Running as a follower')
         self.role = KVServer.follower
         self.last_update = time.time()
         while time.time() - self.last_update <= self.curEleTimeout:
@@ -167,7 +175,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             self.follower_state.start()
 
     def leader(self):
-        print("Running as a leader")
+        self.logger.critical(f'RAFT: Running as a leader')
         self.role = KVServer.leader
         # volatile state on leaders: nextIndex[], matchIndex[]
         # self.nextIndex = {}
@@ -176,10 +184,11 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         #     self.nextIndex[peer] = len(self.log) + 1
         #     self.matchIndex[peer] = 0
         # Todo: testing could be done here
-        self.log.append([1, "aa", "bb"])
-        self.log.append([1, "aa", "bb"])
-        self.lastLogIndex = 1
-        self.lastLogTerm = 1
+        self.debug1 += 1
+        self.log.append([self.debug1, "aa", "bb"])
+        self.log.append([self.debug1, "aa", "bb"])
+        self.lastLogIndex +=2
+        self.lastLogTerm +=2
         self.append_entries()
 
     # Leader sends append_entry message as log replication and heart beat
@@ -194,50 +203,64 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             # heart beat
             time.sleep(0.5)
 
+    def debugLogging(self, toadd):
+        print("executed")
+        with open("debug.txt", 'w+') as f:
+            data = json.load(f)
+            data.append(toadd)
+        json.dump(data, f)
+
     def thread_append_entry(self, idx, addr):
         append_request = kvstore_pb2.AppendRequest()
-        prev_log_idx = self.nextIndex[idx]
         append_request.term = self.currentTerm  # int32 term = 1;
         append_request.leaderID = self.id  # int32 leaderID = 2;
-        append_request.prevLogIndex = prev_log_idx  # int32 prevLogIndex = 3;
+        append_request.prevLogIndex = self.nextIndex[idx]  # int32 prevLogIndex = 3;
         append_request.prevLogTerm = 0  # int32 prevLogTerm = 4;
-        if prev_log_idx >= 0 and len(self.log) > 0: append_request.prevLogTerm = self.log[prev_log_idx][0]
+        if 0 <= self.nextIndex[idx] < len(self.log):
+            append_request.prevLogTerm = self.log[self.nextIndex[idx]][0]
         append_request.leaderCommit = self.commitIndex  # int32 leaderCommit = 6;
         last_req_log_idx = self.lastLogIndex
-        for row in self.log[self.nextIndex[idx]:]:  # repeated LogEntry entries = 5;
-            entry = append_request.entries.add()
-            entry.term = row[0]
-            entry.key = row[1]
-            entry.val = row[2]
+        # for row in self.log[0:]:  # repeated LogEntry entries = 5;
+        #     entry = append_request.entries.add()
+        #     entry.term = row[0]
+        #     entry.key = row[1]
+        #     entry.val = row[2]
+        if self.nextIndex[idx] < len(self.log):
+            for row in self.log[self.nextIndex[idx]:]:  # repeated LogEntry entries = 5;
+                entry = append_request.entries.add()
+                entry.term = row[0]
+                entry.key = row[1]
+                entry.val = row[2]
+            self.nextIndex[idx] = self.lastLogIndex + 1
         try:
             with grpc.insecure_channel(addr) as channel:
                 # int32 term = 1;
                 # bool success = 2;
                 # int32 committedIndex = 3;
                 stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
-                print(f'Send append_entry to <{idx}>')
                 if random.uniform(0, 1) < self.cmserver.fail_mat[self.leaderID][self.id]:
                     print("Chaos Monkey blocking")
                     self.logger.warn(f'RAFT[ABORTED]: we will not receive from <{self.leaderID}> '
                                      f', because of ChaosMonkey')
                 else:
+                    print(f'Send append_entry to <{idx}>')
                     append_entry_response = stub.appendEntries(
                         append_request, timeout=self.requestTimeout)
                     # TODO: write to disk upon majority
                     # TODO: Implement append entry response
+                    print("thread_append_entry response received")
                     if not append_entry_response.success:
                         # Failed since another server is leader now
                         if append_entry_response.term > self.currentTerm:
                             self.currentTerm = append_entry_response.term
                             self.save()
                             self.step_down()
-                        # Failed because of log inconsistency
+                        # Failed because of log inconsistency, decrement nextIndex and retry
                         else:
-                            self.nextIndex[idx] = self.nextIndex[idx] - 1
+                            self.nextIndex[idx] = self.matchIndex[idx]+1 #Todo: how to decrement correctly
                     # Success
                     else:
                         self.matchIndex[idx] = last_req_log_idx
-                        self.nextIndex[idx] = last_req_log_idx + 1
                         n_list = sorted(self.matchIndex)
                         # if there exists such N that N> commitIndex and majority of matchIndex[i] >= N
                         # and log[N].term ==currentTerm, set commitIndex = N
@@ -258,68 +281,81 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # repeated LogEntry entries = 5;
         # int32 leaderCommit = 6;
         # TODO: Implement appendEntries gRPC
-        # return kvstore_pb2.AppendResponse(term = self.currentTerm, success = True,
-        #                                 alreadyCommitted = self.alreadyCommitted)
+        # return kvstore_pb2.AppendResponse(term = self.currentTerm, success = True)
         inc_server_id = request.leaderID
         if random.uniform(0, 1) < self.cmserver.fail_mat[inc_server_id][self.id]:
-            print("Chaos Monkey blocking")
             self.logger.warn(f'RAFT[ABORTED]: append entries from server <{inc_server_id}> '
                              f'to <{self.id}>, because of ChaosMonkey')
         else:
-            success = False
-            self.last_update = time.time()
-            # TODO: doesnt contain an entry at prevLogIndex whose term matches prevLogTerm
-            tmp_entries = []
-            print("Append entries from server")
-            for row in request.entries:
-                r = [row.term, row.key, row.val]
-                tmp_entries.append(r)
-
-            # reply false if term < currentTerm,
-            # or log doesn't log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
-            if request.term < self.currentTerm or request.prevLogIndex > self.lastLogIndex or \
-                    (self.log != [] and self.log[request.prevLogIndex][0] != request.prevLogTerm):
+            try:
+                # self.logger.info("Received appendEntries")
                 success = False
-            else:
-
-                success = True
-                #     existing entry conflicts with a new one, same idx different terms,
-                #     delete the existing entry and all that follow it
-                self.logger.info(f'RAFT: checking conflicting entries')
-                itr = 0
-                if len(self.log) > 0:
-                    for a, b in zip(tmp_entries, self.log[request.prevLogIndex:]):
-                        if a != b:
-                            print("Found conflict")
-                            self.log = self.log[:request.prevLogIndex + itr]
-                            return kvstore_pb2.AppendResponse(term=self.currentTerm, success=False)
-                        itr += 1
-
-                # return kvstore_pb2.AppendResponse(term = self.currentTerm, success = success,
-                #                                   alreadyCommitted = self.alreadyCommitted)
-                # Heartbeat
-                if len(tmp_entries) == 0:
-                    pass
-                # Normal append entries
+                self.last_update = time.time()
+                # TODO: doesnt contain an entry at prevLogIndex whose term matches prevLogTerm
+                tmp_entries = []
+                for row in request.entries:
+                    r = [row.term, row.key, row.val]
+                    tmp_entries.append(r)
+                    # self.logger.info(f'row: <{r}>')
+                # reply false if term < currentTerm,
+                # or log doesn't log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
+                if request.term < self.currentTerm or request.prevLogIndex > self.lastLogIndex + 1 or \
+                        (request.prevLogIndex < len(self.log) and
+                         self.log[request.prevLogIndex][0] != request.prevLogTerm):
+                    success = False
+                    self.logger.warning(f'RAFT: appendEntries received on server <{self.id}> and will return false; '
+                                        f'req term: <{request.term}>, cur term: <{self.currentTerm}, '
+                                        f'req prevLogIdx: <{request.prevLogIndex}, lastLogIdx: <{self.lastLogIndex}>, '
+                                        )
                 else:
-                    # TODO: revisit later
-                    # Append any new entries not already in the log
-                    # Todo: check if last log index is updated for every update of log[]
-                    diff = request.prevLogIndex + len(tmp_entries) > len(self.log)
-                    if diff > 0:
-                        self.log.append(tmp_entries[diff:])
-                        self.lastLogIndex += diff
-                        self.lastLogTerm = self.log[self.lastLogIndex][0]
-                    # If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
-                    if request.leaderCommit > self.commitIndex:
-                        self.commitIndex = min(request.leaderCommit, self.lastLogIndex)
-                        writeToDiskKTh = KThread(target=self.writeToDisk, args=())
-                        writeToDiskKTh.start()
-                # int32 term = 1;
-                # bool success = 2;
-                # int32 alreadyCommitted = 3;
+                    # self.logger.info("RAFT: AppendEntries should succeed unless there is conflict entries")
+                    success = True
+                    #     existing entry conflicts with a new one, same idx different terms,
+                    #     delete the existing entry and all that follow it
+                    # self.logger.info(f'RAFT: checking conflicting entries')
+                    itr = 0
+                    if len(self.log) > 0:
+                        for a, b in zip(tmp_entries, self.log[request.prevLogIndex:]):
+                            if a != b:
+                                self.logger.warning(f'RAFT: Found conflict at index <{request.prevLogIndex + itr}>')
+                                self.log = self.log[:request.prevLogIndex + itr]
+                                return kvstore_pb2.AppendResponse(term=self.currentTerm, success=False)
+                            itr += 1
+                    self.logger.info("RAFT: Append entries from server")
+                    # return kvstore_pb2.AppendResponse(term = self.currentTerm, success = success,
+                    #                                   alreadyCommitted = self.alreadyCommitted)
+                    # Heartbeat
+                    if len(tmp_entries) == 0:
+                        pass
+                    # Normal append entries
+                    else:
+                        # Append any new entries not already in the log
+                        # Todo: check if last log index is updated for every update of log[]
+                        to_append_length = request.prevLogIndex + len(tmp_entries) - len(self.log)
+                        self.logger.info(f'RAFT: length of log to append: <{to_append_length}>')
+                        if to_append_length > 0:
+                            self.log += tmp_entries[-to_append_length:]
+                            self.lastLogIndex += to_append_length
+                            # self.logger.info(f'debug: <{self.lastLogIndex}>, <{len(self.log)}>')
+                            self.lastLogTerm = self.log[self.lastLogIndex][0]
+                            self.logger.info(f'RAFT: Server log index: <{self.lastLogIndex}>; '
+                                             f'Server log updated to: <{self.log}>')
+                        # If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+                        # print("Received log from appendEntries is: ", tmp_entries)
+                        if request.leaderCommit > self.commitIndex:
+                            self.commitIndex = min(request.leaderCommit, self.lastLogIndex)
+                            writeToDiskKTh = KThread(target=self.writeToDisk, args=())
+                            writeToDiskKTh.start()
+                    # int32 term = 1;
+                    # bool success = 2;
+                    # int32 alreadyCommitted = 3;
+            except Exception as e:
+                self.logger.error(e)
             return kvstore_pb2.AppendResponse(term=self.currentTerm, success=success)
-            # alreadyCommitted = self.alreadyCommitted)
+                # alreadyCommitted = self.alreadyCommitted)
+
+
+
 
     def writeToDisk(self):
         # TODO: maybe we can append only? maybe we need synchronization

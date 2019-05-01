@@ -1,0 +1,48 @@
+15:08:04,226 raft INFO Initial ChaosMonkey matrix:
+15:08:04,236 raft CRITICAL RAFT: Running as a follower
+15:08:04,237 raft INFO wireless-169-228-122-199.ucsd.edu
+15:08:04,242 raft INFO Server [2-localhost-7002] listening localhost:7002
+15:08:07,0 raft INFO RAFT: Append entries from server
+15:08:07,6 raft INFO RAFT: length of log to append: <2>
+15:08:07,12 raft INFO RAFT: Server log index: <1>; Server log updated to: <[[1, 'aa', 'bb'], [1, 'aa', 'bb']]>
+15:08:07,505 raft INFO RAFT: Append entries from server
+15:08:08,23 raft INFO RAFT: Append entries from server
+15:08:08,518 raft INFO RAFT: Append entries from server
+15:08:09,34 raft INFO RAFT: Append entries from server
+15:08:09,556 raft INFO RAFT: Append entries from server
+15:08:10,38 raft INFO RAFT: Append entries from server
+15:08:10,557 raft INFO RAFT: Append entries from server
+15:08:11,49 raft INFO RAFT: Append entries from server
+15:08:11,563 raft INFO RAFT: Append entries from server
+15:08:12,50 raft INFO RAFT: Append entries from server
+15:08:12,539 raft INFO RAFT: Append entries from server
+15:08:13,54 raft INFO RAFT: Append entries from server
+15:08:13,560 raft INFO RAFT: Append entries from server
+15:08:14,73 raft INFO RAFT: Append entries from server
+15:08:14,573 raft INFO RAFT: Append entries from server
+15:08:15,61 raft INFO RAFT: Append entries from server
+15:08:15,573 raft INFO RAFT: Append entries from server
+15:08:16,116 raft INFO RAFT: Append entries from server
+15:08:16,615 raft INFO RAFT: Append entries from server
+15:08:17,85 raft INFO RAFT: Append entries from server
+15:08:17,579 raft INFO RAFT: Append entries from server
+15:08:18,86 raft INFO RAFT: Append entries from server
+15:08:18,585 raft INFO RAFT: Append entries from server
+15:08:19,95 raft INFO RAFT: Append entries from server
+15:08:19,619 raft INFO RAFT: Append entries from server
+15:08:20,115 raft INFO RAFT: Append entries from server
+15:08:20,597 raft INFO RAFT: Append entries from server
+15:08:21,104 raft INFO RAFT: Append entries from server
+15:08:21,624 raft INFO RAFT: Append entries from server
+15:08:22,303 raft INFO RAFT: Append entries from server
+15:08:22,865 raft INFO RAFT: Append entries from server
+15:09:20,180 raft INFO Initial ChaosMonkey matrix:
+15:09:20,261 raft INFO wireless-169-228-122-199.ucsd.edu
+15:09:20,261 raft INFO Server [2-localhost-7002] listening localhost:7002
+15:09:20,260 raft CRITICAL RAFT: Running as a follower
+15:09:24,507 raft INFO RAFT: Append entries from server
+15:09:24,546 raft INFO RAFT: length of log to append: <2>
+15:09:24,546 raft CRITICAL RAFT: Running as a leader
+15:09:24,547 raft INFO RAFT: Server log index: <1>; Server log updated to: <[[1, 'aa', 'bb'], [1, 'aa', 'bb']]>
+15:09:24,549 raft CRITICAL RAFT: Running as a follower
+15:09:28,182 raft CRITICAL RAFT: Running as a leader
