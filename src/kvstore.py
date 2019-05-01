@@ -58,9 +58,9 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.lastLogTerm = 0
         self.addresses = addresses  # number of nodes implied here
         self.cmserver = CMServer(num_server=len(addresses))
-        logging.basicConfig(filename='logger-%d' % self.id,
+        logging.basicConfig(filename='logger-%d.txt' % self.id,
                             filemode='a',
-                            format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                            format='%(asctime)s,%(msecs)d %(levelname)s %(message)s',
                             datefmt='%H:%M:%S',
                             level=logging.DEBUG)
         self.logger = logging.getLogger('raft')

@@ -1,0 +1,35 @@
+15:14:12,313 raft INFO Initial ChaosMonkey matrix:
+15:14:12,324 raft CRITICAL RAFT: Running as a follower
+15:14:12,325 raft INFO wireless-169-228-122-199.ucsd.edu
+15:14:12,337 raft INFO Server [0-localhost-7000] listening localhost:7000
+15:14:15,652 raft INFO RAFT: Append entries from server
+15:14:15,658 raft INFO RAFT: length of log to append: <2>
+15:14:15,664 raft INFO RAFT: Server log index: <1>; Server log updated to: <[[1, 'aa', 'bb'], [1, 'aa', 'bb']]>
+15:14:16,147 raft INFO RAFT: Append entries from server
+15:14:16,153 raft INFO RAFT: length of log to append: <0>
+15:14:16,658 raft INFO RAFT: Append entries from server
+15:14:17,152 raft INFO RAFT: Append entries from server
+15:14:17,649 raft INFO RAFT: Append entries from server
+15:14:18,176 raft INFO RAFT: Append entries from server
+15:14:18,658 raft INFO RAFT: Append entries from server
+15:14:19,210 raft INFO RAFT: Append entries from server
+15:14:19,826 raft INFO RAFT: Append entries from server
+15:14:20,195 raft INFO RAFT: Append entries from server
+15:14:20,670 raft INFO RAFT: Append entries from server
+15:14:21,200 raft INFO RAFT: Append entries from server
+15:14:21,675 raft INFO RAFT: Append entries from server
+15:14:22,255 raft INFO RAFT: Append entries from server
+15:14:22,703 raft INFO RAFT: Append entries from server
+15:14:23,185 raft INFO RAFT: Append entries from server
+15:14:23,771 raft INFO RAFT: Append entries from server
+15:14:24,191 raft INFO RAFT: Append entries from server
+15:14:24,715 raft INFO RAFT: Append entries from server
+15:14:25,217 raft INFO RAFT: Append entries from server
+15:14:25,765 raft INFO RAFT: Append entries from server
+15:14:26,263 raft INFO RAFT: Append entries from server
+15:14:26,726 raft INFO RAFT: Append entries from server
+15:14:27,241 raft INFO RAFT: Append entries from server
+15:14:27,738 raft INFO RAFT: Append entries from server
+15:14:28,222 raft INFO RAFT: Append entries from server
+15:14:28,723 raft INFO RAFT: Append entries from server
+15:14:32,703 raft WARNING RAFT: appendEntries received on server <0> and will return false; req term: <2>, cur term: <3, req prevLogIdx: <0, lastLogIdx: <1>, 
