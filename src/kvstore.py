@@ -16,69 +16,66 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
     follower = 0
     candidate = 1
     leader = 2
+
     def __init__(self, addresses: list, id: int, server_config: dict):
         # TODO: All log entries, only append when leader receives entries in put, also change lastLogIndex
-        # self.all_log_entries = []
-        self.log_entries = []
+        ### Persistent state on all servers
+        self.currentTerm = 0
+        self.votedFor = -1
+        self.log = []
+
+        # Todo: append to existing log
+        # load persistent state from json file
+        self.id = id
+        self.persistent_file = 'config-%d' % self.id
+        self.diskData = "data-%d.pkl" % self.id
+        self.load()
         self.storage = {}
-        self.requestTimeout = server_config["request_timeout"] # in ms
+        # Config
+        self.requestTimeout = server_config["request_timeout"]  # in ms
         self.electionTimeout = server_config["election_timeout"]
         self.keySizeLimit = server_config["key_size"]
         self.valSizeLimit = server_config["value_size"]
 
-        self.id = id
-        self.persistent_file = 'config-%d' % self.id
-        # load persistent state from json file
-        self.load()
-
-        self.diskData = "data-%d.pkl" % self.id
-
-        #volatile state
+        ### Volatile state on all servers
+        self.commitIndex = -1  # known to be commited
+        self.lastApplied = -1  # index of highest log entry applied to state machine
         self.role = KVServer.follower
         self.leaderID = -1
-        self.commitIndex = -1
-        self.alreadyCommitted = -1
+        self.committedIndex = -1
         self.peers = []
-        # AKA nextIndex[]
-        self.nextLogIndDic = {}
-        # AKA matchIndex[]
-        self.nextCommitIndDic = {}
 
         # current state
-        self.curEleTimeout = float(random.randint(self.electionTimeout/2, self.electionTimeout)/1000) # in sec
+        self.curEleTimeout = float(random.randint(self.electionTimeout / 2, self.electionTimeout) / 1000)  # in sec
         for idx, addr in enumerate(addresses):
             if idx != self.id:
                 self.peers.append(idx)
         self.majority = int(len(addresses) / 2) + 1
         print(self.majority)
         # self.request_votes = self.peers[:]
-        self.lastLogIndex = 0
+        self.lastLogIndex = -1
         self.lastLogTerm = 0
-        self.addresses = addresses # number of nodes implied here
+        self.addresses = addresses  # number of nodes implied here
         self.cmserver = CMServer(num_server=len(addresses))
         self.logger = logging.getLogger('raft')
         self.logger.info('Initial ChaosMonkey matrix:')
         print(self.cmserver)
 
+        ### Volatile state on leaders
+        self.nextIndex = [0] * len(addresses)  # index of next log entry to send to that server
+        self.matchIndex = [-1] * len(addresses)  # highest log entry known to be replicated
+
     def load(self):
-        self.currentTerm = 0
         self.votedFor = -1
-        # each entry in the list contains (term, key, value)
-        # self.log_entries = [] #TODO: don't load this later
         if os.path.isfile(self.persistent_file):
             with open(self.persistent_file, 'r') as f:
                 datastore = json.load(f)
                 self.currentTerm = datastore["currentTerm"]
                 self.votedFor = datastore["votedFor"]
-                # TODO: each entry in the list contains (term, key, value)
-                # self.log_entries = datastore["log_entries"]
-
 
     def save(self):
-        #TODO: check if all currentTerm and votedFor has .save() save persistent state to json file
-        # Writing JSON data
-        # dont' dump the logs
-        persistent = {"currentTerm": self.currentTerm, "votedFor": self.votedFor} #,"log_entries": self.log_entries
+        # TODO: check if all currentTerm and votedFor has .save() save persistent state to json file
+        persistent = {"currentTerm": self.currentTerm, "votedFor": self.votedFor}
         with open(self.persistent_file, 'w') as f:
             json.dump(persistent, f)
 
@@ -91,7 +88,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.start_election()
         while True:
             self.last_update = time.time()
-            self.curEleTimeout = float(random.randint(self.electionTimeout/2, self.electionTimeout)/1000)
+            self.curEleTimeout = float(random.randint(self.electionTimeout / 2, self.electionTimeout) / 1000)
             while time.time() - self.last_update <= self.curEleTimeout:
                 pass
             # kill old election thread
@@ -107,7 +104,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.votedFor = self.id
         self.save()
         self.numVotes = 1
-        self.election = KThread(target = self.initiateVote, args = ())
+        self.election = KThread(target=self.initiateVote, args=())
         self.election.start()
 
     def initiateVote(self):
@@ -115,24 +112,24 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             if idx == self.id:
                 continue
             # Create a thread for each request vote
-            election_thread = KThread(target = self.thread_election, args = (idx, addr, ))
+            election_thread = KThread(target=self.thread_election, args=(idx, addr,))
             election_thread.start()
 
     def thread_election(self, idx, addr):
-        vote_request = kvstore_pb2.VoteRequest(term = self.currentTerm, candidateID = self.id,
-                                               lastLogIndex = self.lastLogIndex, lastLogTerm = self.lastLogTerm)
+        vote_request = kvstore_pb2.VoteRequest(term=self.currentTerm, candidateID=self.id,
+                                               lastLogIndex=self.lastLogIndex, lastLogTerm=self.lastLogTerm)
         try:
             with grpc.insecure_channel(addr) as channel:
                 stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
                 print(f'Send vote request to <{idx}>')
                 # Timeout error
                 req_vote_resp = stub.requestVote(
-                    vote_request, timeout = self.requestTimeout) # timeout keyword ok?
+                    vote_request, timeout=self.requestTimeout)  # timeout keyword ok?
                 print(req_vote_resp.voteGranted, req_vote_resp.term)
                 # if I receive voteGranted
                 # TODO: Add lock here to consider concurrency
-                self.nextLogIndDic[req_vote_resp.serverID] = req_vote_resp.lastLogIndex
-                self.nextCommitIndDic[req_vote_resp.serverID] = req_vote_resp.lastCommitIndex
+                self.nextIndex[req_vote_resp.serverID] = req_vote_resp.lastLogIndex
+                self.matchIndex[req_vote_resp.serverID] = req_vote_resp.lastCommitIndex
                 if req_vote_resp.voteGranted:
                     print(f'vote received from <{idx}>, <{self.majority}>')
                     if self.role == KVServer.candidate:
@@ -145,7 +142,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                                 self.election.kill()
                             self.follower_state.kill()
                             # Create a thread for leader thread
-                            self.leader_state = KThread(target = self.leader, args = ())
+                            self.leader_state = KThread(target=self.leader, args=())
                             self.leader_state.start()
                 else:
                     print(f'vote rejected from <{idx}>')
@@ -166,7 +163,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             self.role = KVServer.follower
         elif self.role == KVServer.leader:
             self.leader_state.kill()
-            self.follower_state = KThread(target = self.follower, args = ())
+            self.follower_state = KThread(target=self.follower, args=())
             self.follower_state.start()
 
     def leader(self):
@@ -175,17 +172,13 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # volatile state on leaders: nextIndex[], matchIndex[]
         # self.nextIndex = {}
         # self.matchIndex ={} #known commit index on servers
-        for idx in self.peers:
-            if(idx not in self.nextLogIndDic): self.nextLogIndDic[idx] = 0
-            if(idx not in self.nextCommitIndDic): self.nextCommitIndDic[idx] = -1
         # for peer in self.peers:
-        #     self.nextIndex[peer] = len(self.log_entries) + 1
+        #     self.nextIndex[peer] = len(self.log) + 1
         #     self.matchIndex[peer] = 0
-        self.log_entries.append([1, "aa", "bb"])
-        self.all_log_entries.append([1, "aa", "bb"])
-        self.log_entries.append([1, "aa", "bb"])
-        self.all_log_entries.append([1, "aa", "bb"])
-        self.lastLogIndex = 2
+        # Todo: testing could be done here
+        self.log.append([1, "aa", "bb"])
+        self.log.append([1, "aa", "bb"])
+        self.lastLogIndex = 1
         self.lastLogTerm = 1
         self.append_entries()
 
@@ -196,46 +189,31 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 if idx == self.id:
                     continue
                 # Create a thread for each append_entry message
-                append_thread = KThread(target = self.thread_append_entry, args = (idx, addr, ))
+                append_thread = KThread(target=self.thread_append_entry, args=(idx, addr,))
                 append_thread.start()
             # heart beat
             time.sleep(0.5)
 
     def thread_append_entry(self, idx, addr):
         append_request = kvstore_pb2.AppendRequest()
-        numEntToUpdate = self.lastLogIndex - self.nextLogIndDic[idx]
-        prevLogTerm = 0
-        entries = []
-        if(len(self.log_entries) != 0 ):
-            if (len(self.log_entries) > numEntToUpdate):
-                entries = self.log_entries[-numEntToUpdate:]
-                prevLogTerm = self.log_entries[-numEntToUpdate][0]
-            else:
-                entries = self.all_log_entries[-numEntToUpdate:]
-                prevLogTerm = self.all_log_entries[-numEntToUpdate][0]
-    # int32 term = 1;
-    # int32 leaderID = 2;
-    # int32 prevLogIndex = 3;
-    # int32 prevLogTerm = 4;
-    # repeated LogEntry entries = 5;
-    # int32 leaderCommit = 6;
-
-        append_request.term = self.currentTerm
-        append_request.leaderID = self.id
-        append_request.prevLogIndex = self.nextLogIndDic[idx]
-        append_request.prevLogTerm = prevLogTerm
-        append_request.leaderCommit = self.commitIndex #TODO: update commitInd of leader somewhere else
-        lastLogIndInReq = self.lastLogIndex
-        for temp_entry in entries:
+        prev_log_idx = self.nextIndex[idx]
+        append_request.term = self.currentTerm  # int32 term = 1;
+        append_request.leaderID = self.id  # int32 leaderID = 2;
+        append_request.prevLogIndex = prev_log_idx  # int32 prevLogIndex = 3;
+        append_request.prevLogTerm = 0  # int32 prevLogTerm = 4;
+        if prev_log_idx >= 0 and len(self.log) > 0: append_request.prevLogTerm = self.log[prev_log_idx][0]
+        append_request.leaderCommit = self.commitIndex  # int32 leaderCommit = 6;
+        last_req_log_idx = self.lastLogIndex
+        for row in self.log[self.nextIndex[idx]:]:  # repeated LogEntry entries = 5;
             entry = append_request.entries.add()
-            entry.term = temp_entry[0]
-            entry.key = temp_entry[1]
-            entry.val = temp_entry[2]
+            entry.term = row[0]
+            entry.key = row[1]
+            entry.val = row[2]
         try:
             with grpc.insecure_channel(addr) as channel:
                 # int32 term = 1;
                 # bool success = 2;
-                # int32 alreadyCommitted = 3;
+                # int32 committedIndex = 3;
                 stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
                 print(f'Send append_entry to <{idx}>')
                 if random.uniform(0, 1) < self.cmserver.fail_mat[self.leaderID][self.id]:
@@ -244,11 +222,9 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                                      f', because of ChaosMonkey')
                 else:
                     append_entry_response = stub.appendEntries(
-                        append_request, timeout = self.requestTimeout)
-
+                        append_request, timeout=self.requestTimeout)
                     # TODO: write to disk upon majority
                     # TODO: Implement append entry response
-
                     if not append_entry_response.success:
                         # Failed since another server is leader now
                         if append_entry_response.term > self.currentTerm:
@@ -257,21 +233,24 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                             self.step_down()
                         # Failed because of log inconsistency
                         else:
-                            self.nextLogIndDic[idx] = self.nextLogIndDic[idx] - 1
+                            self.nextIndex[idx] = self.nextIndex[idx] - 1
                     # Success
                     else:
-                        self.nextCommitIndDic[idx] = append_entry_response.alreadyCommitted
-                        self.nextLogIndDic[idx] = lastLogIndInReq + 1
-                        nList = sorted(self.nextLogIndDic.values())
-                        self.commitIndex = nList[int(len(nList)/2)]
-                        writeToDiskKTh = KThread(target = self.writeToDisk, args = ())
-                        writeToDiskKTh.start()
-
+                        self.matchIndex[idx] = last_req_log_idx
+                        self.nextIndex[idx] = last_req_log_idx + 1
+                        n_list = sorted(self.matchIndex)
+                        # if there exists such N that N> commitIndex and majority of matchIndex[i] >= N
+                        # and log[N].term ==currentTerm, set commitIndex = N
+                        N = n_list[int(len(n_list) / 2)]
+                        if N >= 0 and N > self.commitIndex and self.log[N][0] == self.currentTerm:
+                            self.commitIndex = N
+                            writeToDiskKTh = KThread(target=self.writeToDisk, args=())
+                            writeToDiskKTh.start()
         except Exception as e:
             self.logger.error(e)
 
     # mcip
-    def appendEntries(self, request, context): # receiving/server side
+    def appendEntries(self, request, context):  # receiving/server side
         # int32 term = 1;
         # int32 leaderID = 2;
         # int32 prevLogIndex = 3;
@@ -292,17 +271,15 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             # TODO: doesnt contain an entry at prevLogIndex whose term matches prevLogTerm
             tmp_entries = []
             print("Append entries from server")
-
-
             for row in request.entries:
                 r = [row.term, row.key, row.val]
                 tmp_entries.append(r)
 
-            # reply false if term < currentTerm, or log doesn't log doesn't contain an entry at prevLogIndex
+            # reply false if term < currentTerm,
+            # or log doesn't log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
             if request.term < self.currentTerm or request.prevLogIndex > self.lastLogIndex or \
-                (self.log_entries != [] and self.log_entries[0] != tmp_entries[self.lastLogIndex-request.prevLogIndex]):
+                    (self.log != [] and self.log[request.prevLogIndex][0] != request.prevLogTerm):
                 success = False
-
             else:
 
                 success = True
@@ -310,70 +287,58 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 #     delete the existing entry and all that follow it
                 self.logger.info(f'RAFT: checking conflicting entries')
                 itr = 0
-
-                for a, b in zip(tmp_entries, self.log_entries[self.lastLogIndex - request.prevLogIndex:]):
-                    if a != b:
-                        print("Found conflict")
-                        self.log_entries = self.log_entries[:self.lastLogIndex - request.prevLogIndex + itr]
-                        return kvstore_pb2.AppendResponse(term = self.currentTerm, success = False,
-                                                          alreadyCommitted = self.alreadyCommitted)
-                    itr += 1
+                if len(self.log) > 0:
+                    for a, b in zip(tmp_entries, self.log[request.prevLogIndex:]):
+                        if a != b:
+                            print("Found conflict")
+                            self.log = self.log[:request.prevLogIndex + itr]
+                            return kvstore_pb2.AppendResponse(term=self.currentTerm, success=False)
+                        itr += 1
 
                 # return kvstore_pb2.AppendResponse(term = self.currentTerm, success = success,
                 #                                   alreadyCommitted = self.alreadyCommitted)
                 # Heartbeat
                 if len(tmp_entries) == 0:
-                   pass
+                    pass
                 # Normal append entries
                 else:
                     # TODO: revisit later
                     # Append any new entries not already in the log
-                    # Todo: check if last log index is updated for every update of log_entries[]
-                    if(request.prevLogIndex + len(tmp_entries) > len(self.log_entries) + self.commitIndex):
-                        diff = request.prevLogIndex + len(tmp_entries) - (len(self.log_entries) + self.commitIndex)
-                        self.log_entries.append(tmp_entries[-diff:])
-                        self.lastLogIndex = request.prevLogIndex + len(tmp_entries)
+                    # Todo: check if last log index is updated for every update of log[]
+                    diff = request.prevLogIndex + len(tmp_entries) > len(self.log)
+                    if diff > 0:
+                        self.log.append(tmp_entries[diff:])
+                        self.lastLogIndex += diff
+                        self.lastLogTerm = self.log[self.lastLogIndex][0]
                     # If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
                     if request.leaderCommit > self.commitIndex:
                         self.commitIndex = min(request.leaderCommit, self.lastLogIndex)
-                        writeToDiskKTh = KThread(target = self.writeToDisk, args = ())
+                        writeToDiskKTh = KThread(target=self.writeToDisk, args=())
                         writeToDiskKTh.start()
                 # int32 term = 1;
                 # bool success = 2;
                 # int32 alreadyCommitted = 3;
-            return kvstore_pb2.AppendResponse(term = self.currentTerm, success = success,
-                                              alreadyCommitted = self.alreadyCommitted)
+            return kvstore_pb2.AppendResponse(term=self.currentTerm, success=success)
+            # alreadyCommitted = self.alreadyCommitted)
 
     def writeToDisk(self):
         # TODO: maybe we can append only? maybe we need synchronization
-        tmpList = []
-        if os.path.exists(self.diskData):
-            with open(self.diskData, 'rb') as f:
-                tmpList = pkl.load(f)
-        tmpList.append(self.log_entries[:self.commitIndex-self.lastLogIndex])
+        to_write = self.log[:self.commitIndex]
         with open(self.diskData, 'wb') as f:
-            pkl.dump(tmpList, f)
-        self.log_entries = self.log_entries[self.commitIndex-self.lastLogIndex:] # TODO: async issues?
-        self.alreadyCommitted = self.commitIndex
+            pkl.dump(to_write, f)
+        self.committedIndex = self.commitIndex
 
     # Todo: read from dictionary instead using STORAGE
     def readWithKey(self, key):
-        n = len(self.log_entries)
-        for i in range(n-1, -1, -1):
-            if self.log_entries[i][1] == key: return self.log_entries[i][2]
-        tmp_list = []
-        with open(self.diskData, 'wb') as f:
-            tmp_list = pkl.load(f)
-        for i in range(len(tmp_list)-1, -1, -1):
-            if tmp_list[i][1] == key: return tmp_list[i][2]
+        n = len(self.log)
+        for i in range(n - 1, -1, -1):
+            if self.log[i][1] == key: return self.log[i][2]
         return ""
-
 
     def run(self):
         # Create a thread to run as follower
-        self.follower_state = KThread(target = self.follower, args = ())
+        self.follower_state = KThread(target=self.follower, args=())
         self.follower_state.start()
-
 
     # Checkpoint 1 Get Put Methods
     def localGet(self, key):
@@ -394,7 +359,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
 
     def localPut(self, key, val):
         resp = kvstore_pb2.PutResponse()
-        self.storage[key] = val # dictionary
+        self.storage[key] = val  # dictionary
         resp.ret = kvstore_pb2.SUCCESS
         self.logger.info(f'RAFT: localPut <{key}, {val}>')
         return resp
@@ -445,8 +410,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         val = request.value
         self.lastLogIndex += 1
         resp = self.localPut(key, val)
-        log = [self.currentTerm, key, val]
-        self.log_entries.append(log)
+        cur_log = [self.currentTerm, key, val]
+        self.log.append(cur_log)
         self.save()
         '''
         for idx, addr in enumerate(self.addresses):
@@ -471,46 +436,45 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         '''
         return resp
 
-
-    # def appendEntries(self, request, context):
-    #
-    #     entries = request.entries
-    #     leaderCommit = request.leaderCommit
-    #     prevLogTerm = request.prevLogTerm
-    #     prevLogIndex = request.prevLogIndex
-    #     matchIndex = self.commitIndex
-    #     # a valid new leader
-    #     if request.term >= self.currentTerm:
-    #         self.currentTerm = request.term
-    #         self.save()
-    #         self.step_down()
-    #         if self.role == KVServer.follower:
-    #             self.last_update = time.time()
-    #         if prevLogIndex != 0:
-    #             if len(self.log_entries) >= prevLogIndex:
-    #                 if self.log_entries[prevLogIndex-1].term == prevLogTerm:
-    #                     success = True
-    #                     self.leaderID = request.leaderID
-    #                     if len(entries) != 0:
-    #                         self.log_entries = self.log_entries[:prevLogIndex] + entries
-    #                         matchIndex = len(self.log_entries)
-    #                 else:
-    #                     success = False
-    #         else:
-    #             success = True
-    #             if len(entries) != 0:
-    #                 self.log_entries = self.log_entries[:prevLogIndex] + entries
-    #                 self.save()
-    #                 matchIndex = len(self.log_entries)
-    #             self.leaderID = request.leaderID
-    #     else:
-    #         success = False
-    #     if leaderCommit > self.commitIndex:
-    #         lastApplied = self.commitIndex
-    #         self.commitIndex = min(leaderCommit, len(self.log_entries))
-    #         if self.commitIndex > lastApplied:
-    #             for idx in range(1, self.commitIndex + 1):
-    #                 self.storage[self.log_entries[idx-1].key] = self.log_entries[idx-1].value
+        # def appendEntries(self, request, context):
+        #
+        #     entries = request.entries
+        #     leaderCommit = request.leaderCommit
+        #     prevLogTerm = request.prevLogTerm
+        #     prevLogIndex = request.prevLogIndex
+        #     matchIndex = self.commitIndex
+        #     # a valid new leader
+        #     if request.term >= self.currentTerm:
+        #         self.currentTerm = request.term
+        #         self.save()
+        #         self.step_down()
+        #         if self.role == KVServer.follower:
+        #             self.last_update = time.time()
+        #         if prevLogIndex != 0:
+        #             if len(self.log_entries) >= prevLogIndex:
+        #                 if self.log_entries[prevLogIndex-1].term == prevLogTerm:
+        #                     success = True
+        #                     self.leaderID = request.leaderID
+        #                     if len(entries) != 0:
+        #                         self.log_entries = self.log_entries[:prevLogIndex] + entries
+        #                         matchIndex = len(self.log_entries)
+        #                 else:
+        #                     success = False
+        #         else:
+        #             success = True
+        #             if len(entries) != 0:
+        #                 self.log_entries = self.log_entries[:prevLogIndex] + entries
+        #                 self.save()
+        #                 matchIndex = len(self.log_entries)
+        #             self.leaderID = request.leaderID
+        #     else:
+        #         success = False
+        #     if leaderCommit > self.commitIndex:
+        #         lastApplied = self.commitIndex
+        #         self.commitIndex = min(leaderCommit, len(self.log_entries))
+        #         if self.commitIndex > lastApplied:
+        #             for idx in range(1, self.commitIndex + 1):
+        #                 self.storage[self.log_entries[idx-1].key] = self.log_entries[idx-1].value
         # return kvstore_pb2.AppendResponse(term = self.currentTerm, success = success, matchIndex = matchIndex)
         # pass
 
@@ -540,7 +504,6 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             return kvstore_pb2.AppendResponse(ret = kvstore_pb2.FAILURE, value='')
         '''
 
-
     def requestVote(self, request, context):
         reqTerm = request.term
         reqCandidateID = request.candidateID
@@ -554,7 +517,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         elif reqTerm == self.currentTerm:
             # TODO: Add lock here
             if reqLastLogTerm >= self.lastLogTerm and reqLastLogIndex >= self.lastLogIndex \
-                and (self.votedFor == -1 or self.votedFor == reqCandidateID):
+                    and (self.votedFor == -1 or self.votedFor == reqCandidateID):
                 votegranted = True
                 self.votedFor = reqCandidateID
                 self.save()
@@ -571,7 +534,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 self.save()
             else:
                 votegranted = False
-        return kvstore_pb2.VoteResponse(term = self.currentTerm, voteGranted = votegranted)
+        return kvstore_pb2.VoteResponse(term=self.currentTerm, voteGranted=votegranted)
 
     # mcip
 
@@ -603,7 +566,3 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
     #         self.lastLogIndex, lastCommitIndex = self.lastApplied, voteGranted = votegranted)
     #     # self.logger.info(f'RAFT: vote denied for server <{reqCandidateID}>')
     #     # self.logger.critical(f'RAFT: voted for <{reqCandidateID}>')
-
-
-
-

@@ -60,7 +60,7 @@ message AppendRequest {
 message AppendResponse {
     int32 term = 1;
     bool success = 2;
-    int32 alreadyCommitted = 3;
+//    int32 alreadyCommitted = 3;
 }
 
 message VoteRequest{
