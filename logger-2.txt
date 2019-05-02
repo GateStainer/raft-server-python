@@ -1,5 +1,0 @@
-15:14:12,325 raft INFO Initial ChaosMonkey matrix:
-15:14:12,336 raft INFO wireless-169-228-122-199.ucsd.edu
-15:14:12,336 raft CRITICAL RAFT: Running as a follower
-15:14:12,336 raft INFO Server [2-localhost-7002] listening localhost:7002
-15:14:15,593 raft CRITICAL RAFT: Running as a leader
