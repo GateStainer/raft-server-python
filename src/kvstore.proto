@@ -7,6 +7,7 @@ service KeyValueStore {
     rpc Put(PutRequest) returns (PutResponse) {}
     rpc appendEntries(AppendRequest) returns (AppendResponse) {}
     rpc requestVote(VoteRequest) returns(VoteResponse){}
+//    rpc redirectToLeader(redirectRequest) returns(redirectResponse){}
 //    rpc inspIntServState(InspectRequest) returns(InspectResponse){}
 }
 
@@ -18,20 +19,24 @@ enum ReturnCode {
 
 message GetRequest {
     string key = 1;
+    int32 serverID = 2;
 }
 
 message GetResponse {
     string value = 1;
     ReturnCode ret = 2;
+    int32 leaderID = 3;
 }
 
 message PutRequest {
     string key = 1;
     string value = 2;
+    int32 serverID = 3;
 }
 
 message PutResponse {
     ReturnCode ret = 1;
+    int32 leaderID = 2;
 }
 
 //enum AppendType {
@@ -79,7 +84,6 @@ message VoteResponse{
 }
 
 //message InspectRequest{
-//
 //}
 //
 //message InspectResponse{
