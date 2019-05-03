@@ -34,9 +34,9 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
 
         # load persistent state from json file
         self.id = id
-        self.persistent_file = '/data/config-%d' % self.id
-        self.diskLog = "/data/log-%d.pkl" % self.id
-        self.diskStateMachine = "/data/state_machine-%d.pkl" % self.id
+        self.persistent_file = 'log/config-%d' % self.id
+        self.diskLog = "log/log-%d.pkl" % self.id
+        self.diskStateMachine = "log/state_machine-%d.pkl" % self.id
         # Todo: will re-enable load later
         # self.load()
         self.stateMachine = {}  # used to be storage
@@ -56,9 +56,15 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.peers = []
         self.lastUpdate = time.time()
 
+        # Condition variables
         self.appendEntriesCond = Condition()
         self.appliedStateMachCond = Condition()
         self.roleCond = Condition()
+        self.lastCommittedTermCond = Condition()
+
+        # Client related
+        self.registeredClients = []
+        self.clientReqResults = {}  # clientID: [stateMachineOutput, sequenceNum]
 
         # current state
         self.currElectionTimeout = float(random.randint(self.maxElectionTimeout / 2, self.maxElectionTimeout) / 1000)  # in sec
@@ -72,7 +78,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.cmserver = CMServer(num_server=len(addresses))
 
         # logging setting
-        logging.basicConfig(filename='/data/logger-%d.txt' % self.id,
+        logging.basicConfig(filename='log/logger-%d.txt' % self.id,
                             level=logging.NOTSET,
                             filemode='a',
                             format='%(asctime)s,%(msecs)d %(levelname)s %(message)s',
@@ -216,6 +222,9 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
 
     def leader(self):
         self.logger.critical(f'RAFT[Role]: Running as a leader')
+        # Todo: might need debugging?
+        # Upon becoming leader, append no-op entry to log (6.4)
+        self.logModify([self.currentTerm, "no-op", "no-op"], LogMod.APPEND)
         self.role = KVServer.leader
         # for each server it's the index of next log entry to send to that server
         # init to leader last log index + 1
@@ -450,100 +459,123 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
     # Todo: add client ID and sequence number
     def Get(self, request, context):
         # string key = 1;
-        # int32 serverID = 2;
-        if self.role == KVServer.candidate:
-            self.logger.warning(f'RAFT[KVStore]: Server get encountered election process')
-            self.roleCond.acquire()
-            self.roleCond.wait_for(lambda: (self.role != KVServer.candidate), timeout=self.requestTimeout)
-            self.roleCond.release()
-        if self.role == KVServer.leader:
-            if random.uniform(0, 1) < self.cmserver.fail_mat[request.serverID][self.id]:
-                self.logger.warning(f'RAFT[ABORTED]: Server get redirect failed from server <{request.serverID}>, '
-                                    f'to leader <{self.id}>, because of ChaosMonkey')
-            else:
-                try:
-                    self.logger.info(f'RAFT[KVStore]: localGet <{request.key}, {self.stateMachine[request.key]}>')
-                    context.set_code(grpc.StatusCode.OK)
-                    # string value = 1;
-                    # ReturnCode ret = 2;
-                    # int32 leaderID = 3;
-                    return kvstore_pb2.GetResponse(value=self.stateMachine[request.key], ret=kvstore_pb2.SUCCESS,
-                                                   leaderHint=self.id)
-                except KeyError:
-                    self.logger.warning(f'RAFT[KVStore]: localGet failed, no such key: [{request.key}]')
-                    context.set_code(grpc.StatusCode.CANCELLED)
-                    return kvstore_pb2.GetResponse(value="", ret=kvstore_pb2.FAILURE, leaderHint=self.id)
-        elif self.role == KVServer.follower:  # Role is follower
-
-            with grpc.insecure_channel(self.addresses[self.leaderID]) as channel:
-                try:
-                    stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
-                    get_response = stub.Get(kvstore_pb2.GetRequest(key=request.key,
-                                                                   serverID=self.id), timeout=self.requestTimeout)
-                    if get_response.ret == kvstore_pb2.SUCCESS:
-                        self.logger.info(f'RAFT[KVStore]: Server get redirect success from server <{request.serverID}>, '
-                                         f'to leader <{self.id}>')
-                        context.set_code(grpc.StatusCode.OK)
-                        return kvstore_pb2.GetResponse(value=get_response.value, ret=kvstore_pb2.SUCCESS,
-                                                       leaderHint=self.id)
-                    else:
-                        self.logger.warning(f'RAFT[KVStore]: Server get redirect failed from server '
-                                            f'<{request.serverID}>, '
-                                            f'to leader <{self.id}>')
-                        context.set_code(grpc.StatusCode.CANCELLED)
-                        return kvstore_pb2.GetResponse(value="", ret=kvstore_pb2.FAILURE, leaderHint=self.id)
-                except Exception as e:
-                    self.logger.error(e)
-        else:
-            self.logger.warning(f'RAFT[KVStore]: Server get timeout due to long election')
+        # Reply NOT_LEADER if not leader, providing hint when available
+        if self.role != KVServer.leader:
+            # string value = 1;
+            # ClientRPCStatus status = 2;
+            # int32 leaderHint = 3;
+            self.logger.info(f'RAFT[KVStore]: Get redirect to leader <{self.leaderID}>')
+            return kvstore_pb2.GetResponse(value="", status=kvstore_pb2.NOT_LEADER, leaderHint=self.leaderID)
+        try:
+            # Wait until last committed entry is from leader's term
+            with self.lastCommittedTermCond:
+                self.lastCommittedTermCond.wait_for(lambda: self.log[self.commitIndex][0]==self.currentTerm)
+                # Save commitIndex as local variable readIndex
+                read_index = self.commitIndex
+            # Todo: Is this done? Send new round of heartbeats, and wait for reply from majority of servers
+            with self.appendEntriesCond:
+                self.appendEntriesCond.notify()
+            # Wait for state machine to advance at least the readIndex log entry
+            with self.appliedStateMachCond:
+                self.appliedStateMachCond.wait_for(lambda: self.lastApplied>=read_index)
+            # Process query
+            # Reply OK with state machine output
+            self.logger.info(f'RAFT[KVStore]: Get success: <{request.key}, {self.stateMachine[request.key]}>')
+            context.set_code(grpc.StatusCode.OK)
+            return kvstore_pb2.GetResponse(value=self.stateMachine[request.key], status=kvstore_pb2.OK2CLIENT,
+                                           leaderHint=self.id)
+        except KeyError:
+            self.logger.warning(f'RAFT[KVStore]: Get failed, no such key: [{request.key}]')
             context.set_code(grpc.StatusCode.CANCELLED)
-            return kvstore_pb2.GetResponse(value="", ret=kvstore_pb2.FAILURE, leaderHint=self.leaderID)
+            return kvstore_pb2.GetResponse(value="", status=kvstore_pb2.ERROR2CLIENT, leaderHint=self.id)
 
     # Todo: add client ID and sequence number
     def Put(self, request, context):
         # string key = 1;
         # string value = 2;
-        # int32 clientID = 4;
-        # int32 sequenceNum = 5;
+        # int32 clientID = 3;
+        # int32 sequenceNum = 4;
+        # NOT_LEADER = 0;
+        # SESSION_EXPIRED = 1;
+        # OK2CLIENT = 2;
+        # ERROR2CLIENT = 3;
         # if command received from client: append entry to local log, respond after entry applied to state machine
-        if self.role == KVServer.leader:
-            if random.uniform(0, 1) < self.cmserver.fail_mat[request.serverID][self.id]:
-                self.logger.warning(f'RAFT[ABORTED]: Server put redirect failed from server <{request.serverID}>, '
-                                    f'to leader <{self.id}>, because of ChaosMonkey')
-            else:
-                # Todo: current term correct?
-                self.logModify([[self.currentTerm, request.key, request.value]], LogMod.ADDITION)
-                put_log_ind = self.lastLogIndex
-                self.appendEntriesCond.acquire()
-                self.appendEntriesCond.notify()
-                self.appendEntriesCond.release()
-                self.appliedStateMachCond.acquire()
-                self.appliedStateMachCond.wait_for(lambda: (self.lastApplied >= put_log_ind),
-                                                   timeout=self.requestTimeout)
-                self.appliedStateMachCond.release()
-                # ReturnCode ret = 1;
-                # int32 leaderID = 2;
-                if self.lastApplied >= put_log_ind:
-                    self.logger.info(f'RAFT[KVStore]: Server put success on leader <{self.id}>')
-                    context.set_code(grpc.StatusCode.OK)  # Todo: why is this needed?
-                    return kvstore_pb2.PutResponse(ret=kvstore_pb2.OK2CLIENT, leaderHint=self.id)
-                else:
-                    self.logger.warning(f'RAFT[KVStore]: Server put error (timeout?) on leader <{self.id}>')
-                    context.set_code(grpc.StatusCode.CANCELLED)
-                    return kvstore_pb2.PutResponse(ret=kvstore_pb2.ERROR2CLIENT, leaderHint=self.id)
+        # Reply NOT_LEADER if not leader, providing hint when available
+        if self.role != KVServer.leader:
+            return kvstore_pb2.PutResponse(status=kvstore_pb2.NOT_LEADER, response="", leaderHint=self.leaderID)
+        # Reply SESSION_EXPIRED if not record of clientID or if the response for client's sequenceNum
+        # already discarded
+        if request.clientID not in self.registeredClients or \
+                self.clientReqResults[request.clientID][1] > request.sequenceNum:
+            return kvstore_pb2.PutResponse(status=kvstore_pb2.SESSION_EXPIRED, response="", leaderHint=self.leaderID)
+        # Todo: there is no stored response for Put
+        # If sequenceNum already processed from client, reply OK with stored response
+        if self.clientReqResults[request.clientID][1] == request.sequenceNum:
+            return kvstore_pb2.PutResponse(status=kvstore_pb2.OK2CLIENT,
+                                           response=self.clientReqResults[request.clientID][0], leaderHint=self.leaderID)
+        # Todo: Following line has correct order?
+        # Append command to log, replicate and commit it
+        self.logModify([[self.currentTerm, request.key, request.value]], LogMod.ADDITION)
+        put_log_ind = self.lastLogIndex
+        self.appendEntriesCond.acquire()
+        self.appendEntriesCond.notify()
+        self.appendEntriesCond.release()
+        # Apply command in log order
+        self.appliedStateMachCond.acquire()
+        self.appliedStateMachCond.wait_for(lambda: (self.lastApplied >= put_log_ind),
+                                           timeout=self.requestTimeout)
+        self.appliedStateMachCond.release()
+        # Save state machine output with sequenceNum for client, discard any prior sequenceNum for client
+        self.clientReqResults[request.clientID] = [self.stateMachine[request.key], request.sequenceNum]
+
+        # ClientRPCStatus status = 1;
+        # string response = 2;
+        # int32 leaderHint = 3;
+        # Todo: no need for state machine output for put?
+        # Reply OK with state machine output
+        if self.lastApplied >= put_log_ind:
+            self.logger.info(f'RAFT[KVStore]: Server put success on leader <{self.id}>')
+            context.set_code(grpc.StatusCode.OK)  # Todo: why is this needed?
+            return kvstore_pb2.PutResponse(status=kvstore_pb2.OK2CLIENT, response=self.stateMachine[request.key],
+                                           leaderHint=self.id)
         else:
-            return kvstore_pb2.PutResponse(ret=kvstore_pb2.NOT_LEADER, leaderHint=self.leaderID)
-
-
+            self.logger.warning(f'RAFT[KVStore]: Server put error (timeout?) on leader <{self.id}>')
+            context.set_code(grpc.StatusCode.CANCELLED)
+            return kvstore_pb2.PutResponse(status=kvstore_pb2.ERROR2CLIENT, response="", leaderHint=self.id)
 
     def registerClient(self, request, context):
-
+        # ClientRPCStatus status = 1;
+        # int32 clientID = 2;
+        # int32 leaderHint = 3;
+        # Reply NOT_LEADER if not leader, provide hint when available
+        if self.role != KVServer.leader:
+            return kvstore_pb2.PutResponse(status=kvstore_pb2.NOT_LEADER, clientID=-1, leaderHint=self.leaderID)
+        else:
+            # Append register command to log, replicate and commit it
+            cur_last_log_ind = len(self.log)
+            self.logModify([[self.currentTerm, "client"+str(), str(cur_last_log_ind)]], LogMod.ADDITION)
+            self.appendEntriesCond.acquire()
+            self.appendEntriesCond.notify()
+            # Todo: faster if we put following 2 here?
+            self.registeredClients.append(cur_last_log_ind)
+            self.clientReqResults[cur_last_log_ind] = ["", -1]   # init client result dictionary
+            # Apply command in log order, allocating session for new client
+            self.appendEntriesCond.release()
+            self.appliedStateMachCond.acquire()
+            self.appliedStateMachCond.wait_for(lambda: (self.lastApplied >= cur_last_log_ind),
+                                               timeout=self.requestTimeout)
+            self.appliedStateMachCond.release()
+            # Todo: allocating new session!
+            # Reply OK with unique client identifier (the log index of the register command could be used)
+            return kvstore_pb2.PutResponse(status=kvstore_pb2.OK2CLIENT, clientID=cur_last_log_ind,
+                                           leaderHint=self.leaderID)
 
     def clientRequest(self, request, context):
         pass
 
     def clientQuery(self, request, context):
         pass
+
     # Async IO implementation
     # def Get(self, request, context):
     #     # Asyncio implementation
