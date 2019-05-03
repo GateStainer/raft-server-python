@@ -24,6 +24,21 @@ class KeyValueStoreStub(object):
         request_serializer=kvstore__pb2.PutRequest.SerializeToString,
         response_deserializer=kvstore__pb2.PutResponse.FromString,
         )
+    self.registerClient = channel.unary_unary(
+        '/kvstore.KeyValueStore/registerClient',
+        request_serializer=kvstore__pb2.RegisterRequest.SerializeToString,
+        response_deserializer=kvstore__pb2.RegisterResponse.FromString,
+        )
+    self.clientRequest = channel.unary_unary(
+        '/kvstore.KeyValueStore/clientRequest',
+        request_serializer=kvstore__pb2.ClientRequest.SerializeToString,
+        response_deserializer=kvstore__pb2.ClientRequestResponse.FromString,
+        )
+    self.clientQuery = channel.unary_unary(
+        '/kvstore.KeyValueStore/clientQuery',
+        request_serializer=kvstore__pb2.ClientQuery.SerializeToString,
+        response_deserializer=kvstore__pb2.ClientQueryResponse.FromString,
+        )
     self.appendEntries = channel.unary_unary(
         '/kvstore.KeyValueStore/appendEntries',
         request_serializer=kvstore__pb2.AppendRequest.SerializeToString,
@@ -41,13 +56,34 @@ class KeyValueStoreServicer(object):
   pass
 
   def Get(self, request, context):
+    """ClientQuery RPC
+    """
+    context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+    context.set_details('Method not implemented!')
+    raise NotImplementedError('Method not implemented!')
+
+  def Put(self, request, context):
+    """ClientRequest RPC
+    """
+    context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+    context.set_details('Method not implemented!')
+    raise NotImplementedError('Method not implemented!')
+
+  def registerClient(self, request, context):
     # missing associated documentation comment in .proto file
     pass
     context.set_code(grpc.StatusCode.UNIMPLEMENTED)
     context.set_details('Method not implemented!')
     raise NotImplementedError('Method not implemented!')
 
-  def Put(self, request, context):
+  def clientRequest(self, request, context):
+    # missing associated documentation comment in .proto file
+    pass
+    context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+    context.set_details('Method not implemented!')
+    raise NotImplementedError('Method not implemented!')
+
+  def clientQuery(self, request, context):
     # missing associated documentation comment in .proto file
     pass
     context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -80,6 +116,21 @@ def add_KeyValueStoreServicer_to_server(servicer, server):
           servicer.Put,
           request_deserializer=kvstore__pb2.PutRequest.FromString,
           response_serializer=kvstore__pb2.PutResponse.SerializeToString,
+      ),
+      'registerClient': grpc.unary_unary_rpc_method_handler(
+          servicer.registerClient,
+          request_deserializer=kvstore__pb2.RegisterRequest.FromString,
+          response_serializer=kvstore__pb2.RegisterResponse.SerializeToString,
+      ),
+      'clientRequest': grpc.unary_unary_rpc_method_handler(
+          servicer.clientRequest,
+          request_deserializer=kvstore__pb2.ClientRequest.FromString,
+          response_serializer=kvstore__pb2.ClientRequestResponse.SerializeToString,
+      ),
+      'clientQuery': grpc.unary_unary_rpc_method_handler(
+          servicer.clientQuery,
+          request_deserializer=kvstore__pb2.ClientQuery.FromString,
+          response_serializer=kvstore__pb2.ClientQueryResponse.SerializeToString,
       ),
       'appendEntries': grpc.unary_unary_rpc_method_handler(
           servicer.appendEntries,

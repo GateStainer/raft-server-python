@@ -3,8 +3,13 @@ syntax = "proto3";
 package kvstore;
 
 service KeyValueStore {
+    //ClientQuery RPC
     rpc Get(GetRequest) returns (GetResponse) {}
+    //ClientRequest RPC
     rpc Put(PutRequest) returns (PutResponse) {}
+    rpc registerClient(RegisterRequest) returns (RegisterResponse){}
+    rpc clientRequest (ClientRequest) returns (ClientRequestResponse) {}
+    rpc clientQuery (ClientQuery) returns (ClientQueryResponse) {}
     rpc appendEntries(AppendRequest) returns (AppendResponse) {}
     rpc requestVote(VoteRequest) returns(VoteResponse){}
 //    rpc redirectToLeader(redirectRequest) returns(redirectResponse){}
@@ -17,28 +22,76 @@ enum ReturnCode {
     FAILURE = 1;
 }
 
+enum ClientRPCStatus{
+    NOT_LEADER = 0;
+    SESSION_EXPIRED = 1;
+    OK2CLIENT = 2;
+    ERROR2CLIENT = 3;
+}
+
 message GetRequest {
     string key = 1;
-    int32 serverID = 2;
 }
 
 message GetResponse {
     string value = 1;
-    ReturnCode ret = 2;
-    int32 leaderID = 3;
+    ClientRPCStatus status = 2;
+    int32 leaderHint = 3;
 }
 
 message PutRequest {
     string key = 1;
     string value = 2;
-    int32 serverID = 3;
+    int32 clientID = 3;
+    int32 sequenceNum = 4;
 }
 
 message PutResponse {
-    ReturnCode ret = 1;
-    int32 leaderID = 2;
+    ClientRPCStatus status = 1;
+    int32 leaderHint = 2;
 }
 
+message RegisterRequest{
+}
+
+message RegisterResponse{
+    ClientRPCStatus status = 1;
+    int32 clientID = 2;
+    int32 leaderHint = 3;
+}
+
+message KVSet{
+    string key = 1;
+    string value = 2;
+}
+
+message ClientRequest{
+    int32 clientID = 1;
+    int32 sequenceNum = 2;
+    //Assume command to be list consisting of [key, value]
+    repeated KVSet command = 3;
+}
+
+message ClientRequestResponse{
+    ClientRPCStatus status = 1;
+    //Todo: state machine output, if successful?
+    repeated KVSet response = 2;
+    int32 leaderHint = 3;
+}
+
+message Key{
+    string key = 1;
+}
+
+message ClientQuery{
+    repeated Key query = 1;
+}
+
+message ClientQueryResponse{
+    ClientRPCStatus status = 1;
+    repeated KVSet response = 2;
+    int32 leaderHint = 3;
+}
 //enum AppendType {
 //    HEARTBEAT = 0;
 //    GET = 1;
