@@ -91,11 +91,6 @@ message ClientQueryResponse{
     repeated KVSet response = 2;
     int32 leaderHint = 3;
 }
-//enum AppendType {
-//    HEARTBEAT = 0;
-//    GET = 1;
-//    PUT = 2;
-//}
 
 message LogEntry {
     int32 term=1;
@@ -110,14 +105,11 @@ message AppendRequest {
     int32 prevLogTerm = 4;
     repeated LogEntry entries = 5;
     int32 leaderCommit = 6;
-//    should have incoming server ID
-//    int32 incServerID = 7;
 }
 
 message AppendResponse {
     int32 term = 1;
     bool success = 2;
-//    int32 alreadyCommitted = 3;
 }
 
 message VoteRequest{
