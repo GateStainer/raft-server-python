@@ -59,7 +59,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # Condition variables
         self.appendEntriesCond = Condition()
         self.appliedStateMachCond = Condition()
-        self.roleCond = Condition()
+        # self.roleCond = Condition()
         self.lastCommittedTermCond = Condition()
 
         # Client related
@@ -105,7 +105,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 self.votedFor = data_store["votedFor"]
 
     # Todo: check if all currentTerm and votedFor has .save() save persistent state to json file
-    def save(self, current_term = -1, voted_for = -1):
+    def save(self, current_term=-1, voted_for = -1):
         if current_term != -1:
             self.currentTerm = current_term
         if voted_for != -1:
@@ -222,9 +222,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
 
     def leader(self):
         self.logger.critical(f'RAFT[Role]: Running as a leader')
-        # Todo: might need debugging?
-        # Upon becoming leader, append no-op entry to log (6.4)
-        self.logModify([self.currentTerm, "no-op", "no-op"], LogMod.APPEND)
+        self.leaderID = self.id
         self.role = KVServer.leader
         # for each server it's the index of next log entry to send to that server
         # init to leader last log index + 1
@@ -232,22 +230,25 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # for each server, index of highest log entry known to be replicated on server
         # init to 0, increase monotonically
         self.matchIndex = [0] * len(self.addresses)
+        # Todo: might need debugging?
+        # Upon becoming leader, append no-op entry to log (6.4)
+        self.logModify([self.currentTerm, "no-op", "no-op"], LogMod.APPEND)
         self.append_entries()
 
     # Leader sends append_entry message as log replication and heart beat
     def append_entries(self):
         while True:
             # Todo: for debugging only
-            self.debug1 += 1
-            self.logModify([self.debug1, "aa", "bb"], LogMod.APPEND)
-            self.logModify([self.debug1, "bb", "cc"], LogMod.APPEND)
+            # # self.debug1 += 1
+            # self.logModify([self.debug1, "aa", "bb"], LogMod.APPEND)
+            # self.logModify([self.debug1, "bb", "cc"], LogMod.APPEND)
             for idx, addr in enumerate(self.addresses):
                 if idx == self.id:
                     continue
                 # Create a thread for each append_entry message
                 append_thread = KThread(target=self.thread_append_entry, args=(idx, addr,))
                 append_thread.start()
-            # Send append entry every following seconds
+            # Send append entry every following seconds, or be notified and wake up
             # Todo: will release during wait
             self.appendEntriesCond.acquire()
             self.appendEntriesCond.wait(timeout=0.5)
@@ -263,6 +264,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             append_request.prevLogTerm = self.log[self.nextIndex[idx]][0]
         append_request.leaderCommit = self.commitIndex  # int32 leaderCommit = 6;
         last_req_log_idx = self.lastLogIndex
+        self.logger.debug(f'RAFT[KVStore]: last_req_log_idx: <{last_req_log_idx}>, idx: <{idx}>')
         if self.nextIndex[idx] < len(self.log):
             for row in self.log[self.nextIndex[idx]:]:  # repeated LogEntry entries = 5;
                 entry = append_request.entries.add()
@@ -282,7 +284,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 else:
                     self.logger.debug(f'RAFT: Send append_entry to <{idx}>')
                     append_entry_response = stub.appendEntries(
-                        append_request, timeout = self.requestTimeout)
+                        append_request, timeout=self.requestTimeout)
                     if not append_entry_response.success:
                         self.logger.debug("RAFT: thread_append_entry failed")
                         # Failed since another server is leader now
@@ -296,6 +298,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     else:
                         self.logger.debug("RAFT: thread_append_entry success")
                         self.matchIndex[idx] = last_req_log_idx
+                        self.logger.debug(f'RAFT[KVStore]: matchIndex: <{self.matchIndex}>')
                         n_list = sorted(self.matchIndex)
                         # TODO: write to disk upon majority
                         # if there exists such N that N> commitIndex and majority of matchIndex[i] >= N
@@ -316,9 +319,9 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # int32 prevLogTerm = 4;
         # repeated LogEntry entries = 5;
         # int32 leaderCommit = 6;
-        inc_server_id = request.leaderID
-        if random.uniform(0, 1) < self.cmserver.fail_mat[inc_server_id][self.id]:
-            self.logger.warning(f'RAFT[ABORTED]: append entries from server <{inc_server_id}> '
+        self.leaderID = request.leaderID
+        if random.uniform(0, 1) < self.cmserver.fail_mat[self.leaderID][self.id]:
+            self.logger.warning(f'RAFT[ABORTED]: append entries from server <{self.leaderID}> '
                                 f'to <{self.id}>, because of ChaosMonkey')
         else:
             success = False
@@ -338,7 +341,11 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     if request.term < self.currentTerm:  # Todo: do we need to start election here?
                         election_kth = KThread(target=self.step_down, args=())
                         election_kth.start()
+                    self.save(current_term=max(self.currentTerm, request.term))
                     self.logger.warning(f'RAFT: appendEntries received on server <{self.id}>, will return false; ')
+                    self.logger.warning(f'RAFT[App_Entries]: <{request.term < self.currentTerm}>, '
+                                        f'<{request.prevLogIndex > len(self.log)}>, '
+                                        f'<{(request.prevLogIndex < len(self.log) and self.log[request.prevLogIndex][0] != request.prevLogTerm)}>')
                     self.logger.debug(f'Parameters for false: req term: <{request.term}>, cur term: '
                                       f'<{self.currentTerm}>, req prevLogIdx: <{request.prevLogIndex}>, '
                                       f'length of server log <{len(self.log)}>')
@@ -402,6 +409,11 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         with open(self.diskLog, 'wb') as f:
             pkl.dump(self.log, f)
         #     Todo: not needed when it's the leader, what about follower?
+        if self.id == self.leaderID:
+            self.matchIndex[self.id] = self.lastLogIndex
+            # Wait until last committed entry is from leader's term, notify all upon leader's log change
+            with self.lastCommittedTermCond:
+                self.lastCommittedTermCond.notify_all()
         if self.lastLogTerm > self.currentTerm:
             self.save(current_term=self.lastLogTerm)
         self.logger.debug(f'RAFT[Log]: Log updated on disk of server <{self.id}> ,'
@@ -416,6 +428,9 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         with open(self.diskStateMachine, 'wb') as f:
             pkl.dump(self.stateMachine, f)
         self.lastApplied = self.commitIndex
+        # Apply command in log order, notify all upon completion
+        with self.appliedStateMachCond:
+            self.appliedStateMachCond.notify_all()
         self.logger.debug(f'RAFT[StateMach]: Last applied index: <{self.lastApplied}>, '
                           f'state machine updated to: <{self.stateMachine}>')
 
@@ -469,15 +484,16 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         try:
             # Wait until last committed entry is from leader's term
             with self.lastCommittedTermCond:
-                self.lastCommittedTermCond.wait_for(lambda: self.log[self.commitIndex][0]==self.currentTerm)
+                self.lastCommittedTermCond.wait_for(lambda: self.log[self.commitIndex][0] == self.currentTerm)
                 # Save commitIndex as local variable readIndex
                 read_index = self.commitIndex
-            # Todo: Is this done? Send new round of heartbeats, and wait for reply from majority of servers
+            # Todo: Is this done?
+            # Send new round of heartbeats, and wait for reply from majority of servers
             with self.appendEntriesCond:
-                self.appendEntriesCond.notify()
+                self.appendEntriesCond.notify_all()
             # Wait for state machine to advance at least the readIndex log entry
             with self.appliedStateMachCond:
-                self.appliedStateMachCond.wait_for(lambda: self.lastApplied>=read_index)
+                self.appliedStateMachCond.wait_for(lambda: self.lastApplied >= read_index)
             # Process query
             # Reply OK with state machine output
             self.logger.info(f'RAFT[KVStore]: Get success: <{request.key}, {self.stateMachine[request.key]}>')
@@ -517,8 +533,9 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # Append command to log, replicate and commit it
         self.logModify([[self.currentTerm, request.key, request.value]], LogMod.ADDITION)
         put_log_ind = self.lastLogIndex
+        # wake up threads to append entries
         self.appendEntriesCond.acquire()
-        self.appendEntriesCond.notify()
+        self.appendEntriesCond.notify_all()
         self.appendEntriesCond.release()
         # Apply command in log order
         self.appliedStateMachCond.acquire()
@@ -549,26 +566,27 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # int32 leaderHint = 3;
         # Reply NOT_LEADER if not leader, provide hint when available
         if self.role != KVServer.leader:
-            return kvstore_pb2.PutResponse(status=kvstore_pb2.NOT_LEADER, clientID=-1, leaderHint=self.leaderID)
+            return kvstore_pb2.RegisterResponse(status=kvstore_pb2.NOT_LEADER, clientID=-1, leaderHint=self.leaderID)
         else:
             # Append register command to log, replicate and commit it
             cur_last_log_ind = len(self.log)
-            self.logModify([[self.currentTerm, "client"+str(), str(cur_last_log_ind)]], LogMod.ADDITION)
+            self.logModify([[self.currentTerm, "client"+str(cur_last_log_ind), str(cur_last_log_ind)]], LogMod.ADDITION)
+            # wake up threads to register clients
             self.appendEntriesCond.acquire()
-            self.appendEntriesCond.notify()
-            # Todo: faster if we put following 2 here?
-            self.registeredClients.append(cur_last_log_ind)
+            self.appendEntriesCond.notify_all()
+            self.registeredClients.append(cur_last_log_ind)  # Todo: faster if we put following 2 here?
             self.clientReqResults[cur_last_log_ind] = ["", -1]   # init client result dictionary
-            # Apply command in log order, allocating session for new client
             self.appendEntriesCond.release()
+            # Apply command in log order, allocating session for new client
             self.appliedStateMachCond.acquire()
-            self.appliedStateMachCond.wait_for(lambda: (self.lastApplied >= cur_last_log_ind),
-                                               timeout=self.requestTimeout)
+            self.logger.debug(f'RAFT[Client]: Register client: lastApplied, <{self.lastApplied}>, cur_last_log_ind, '
+                              f'<{cur_last_log_ind}>, matchIndex, <{self.matchIndex}>')
+            self.appliedStateMachCond.wait_for(lambda: self.lastApplied >= cur_last_log_ind)
             self.appliedStateMachCond.release()
-            # Todo: allocating new session!
+            # Todo: allocating new session?
             # Reply OK with unique client identifier (the log index of the register command could be used)
-            return kvstore_pb2.PutResponse(status=kvstore_pb2.OK2CLIENT, clientID=cur_last_log_ind,
-                                           leaderHint=self.leaderID)
+            return kvstore_pb2.RegisterResponse(status=kvstore_pb2.OK2CLIENT, clientID=cur_last_log_ind,
+                                                leaderHint=self.leaderID)
 
     def clientRequest(self, request, context):
         pass

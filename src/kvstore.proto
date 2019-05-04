@@ -12,11 +12,9 @@ service KeyValueStore {
     rpc clientQuery (ClientQuery) returns (ClientQueryResponse) {}
     rpc appendEntries(AppendRequest) returns (AppendResponse) {}
     rpc requestVote(VoteRequest) returns(VoteResponse){}
-//    rpc redirectToLeader(redirectRequest) returns(redirectResponse){}
-//    rpc inspIntServState(InspectRequest) returns(InspectResponse){}
+//    rpc inspectServState(InspectRequest) returns(InspectResponse){}
 }
 
-// You'll likely need to define more specific return codes than these!
 enum ReturnCode {
     SUCCESS = 0;
     FAILURE = 1;
