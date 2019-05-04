@@ -14,6 +14,8 @@ import os
 @click.option('--no_sync', is_flag=True)
 def gen_run_script(server_list_file, template_file, remote, no_exec, pem_file, setup, no_sync):
     servers = []
+    addresses = set()
+
     with open(server_list_file, 'r') as file:
         reader = csv.DictReader(file)
         for row in reader:
@@ -23,19 +25,21 @@ def gen_run_script(server_list_file, template_file, remote, no_exec, pem_file, s
         script += file.read()
     for s in servers:
         if remote is True:
-            remote_exec = f'ssh -i {pem_file} ubuntu@{s["address"]}'
+            remote_exec = f'ssh -i {pem_file} ec2-user@{s["address"]}'
             if setup is True:
-                script += f'    - shell_command:\n'
-                script += f'      - {remote_exec} \"sudo apt install python3-pip -y && sudo pip3 install grpcio grpcio-tools\"\n'
+                if s["address"] not in addresses:
+                    script += f'    - shell_command:\n'
+                    script += f'      - {remote_exec} \"sudo yum install python3-pip -y && sudo pip3 install grpcio grpcio-tools click\"\n'
             else:
                 script += f'    - shell_command:\n'
-                if not no_sync:
-                    script += f'      - rsync -r -v -a --delete -P -e "ssh -i {pem_file}" *.csv ubuntu@{s["address"]}:/home/ubuntu/raft/\n'
-                    script += f'      - rsync -r -v -a --delete -P -e "ssh -i {pem_file}" ./src/  ubuntu@{s["address"]}:/home/ubuntu/raft/src\n'
-                    script += f'      - rsync -r -v -a --delete -P -e "ssh -i {pem_file}" ./scripts/  ubuntu@{s["address"]}:/home/ubuntu/raft/scripts\n'
-                script += f'      - {remote_exec} \"cd /home/ubuntu/raft && ./scripts/aws_start_server.sh 0.0.0.0:{s["port"]} {s["id"]}\"\n'
+                if not no_sync and s["address"] not in addresses:
+                    script += f'      - rsync -r -v -a --delete -P -e "ssh -i {pem_file}" *.txt *.csv ec2-user@{s["address"]}:/home/ec2-user/raft/\n'
+                    script += f'      - rsync -r -v -a --delete -P -e "ssh -i {pem_file}" ./src/  ec2-user@{s["address"]}:/home/ec2-user/raft/src\n'
+                    script += f'      - rsync -r -v -a --delete -P -e "ssh -i {pem_file}" ./scripts/  ec2-user@{s["address"]}:/home/ec2-user/raft/scripts\n'
+                script += f'      - {remote_exec} \"cd /home/ec2-user/raft && bash ./scripts/aws_start_server.sh 0.0.0.0:{s["port"]} {s["id"]}\"\n'
         else:
             script += f'    - reset && python src/raft.py {s["address"]}:{s["port"]} --id {s["id"]} --server_list_file server-list.csv\n'
+        addresses.add(s["address"])
     with open('launch_raft.yaml', 'w') as file:
         file.write(script)
     if not no_exec:
