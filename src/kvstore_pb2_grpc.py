@@ -49,6 +49,11 @@ class KeyValueStoreStub(object):
         request_serializer=kvstore__pb2.VoteRequest.SerializeToString,
         response_deserializer=kvstore__pb2.VoteResponse.FromString,
         )
+    self.updateConfigs = channel.unary_unary(
+        '/kvstore.KeyValueStore/updateConfigs',
+        request_serializer=kvstore__pb2.UpdateConfigsRequest.SerializeToString,
+        response_deserializer=kvstore__pb2.UpdateConfigsResponse.FromString,
+        )
 
 
 class KeyValueStoreServicer(object):
@@ -104,6 +109,13 @@ class KeyValueStoreServicer(object):
     context.set_details('Method not implemented!')
     raise NotImplementedError('Method not implemented!')
 
+  def updateConfigs(self, request, context):
+    # missing associated documentation comment in .proto file
+    pass
+    context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+    context.set_details('Method not implemented!')
+    raise NotImplementedError('Method not implemented!')
+
 
 def add_KeyValueStoreServicer_to_server(servicer, server):
   rpc_method_handlers = {
@@ -141,6 +153,11 @@ def add_KeyValueStoreServicer_to_server(servicer, server):
           servicer.requestVote,
           request_deserializer=kvstore__pb2.VoteRequest.FromString,
           response_serializer=kvstore__pb2.VoteResponse.SerializeToString,
+      ),
+      'updateConfigs': grpc.unary_unary_rpc_method_handler(
+          servicer.updateConfigs,
+          request_deserializer=kvstore__pb2.UpdateConfigsRequest.FromString,
+          response_serializer=kvstore__pb2.UpdateConfigsResponse.SerializeToString,
       ),
   }
   generic_handler = grpc.method_handlers_generic_handler(

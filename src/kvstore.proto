@@ -10,9 +10,12 @@ service KeyValueStore {
     rpc registerClient(RegisterRequest) returns (RegisterResponse){}
     rpc clientRequest (ClientRequest) returns (ClientRequestResponse) {}
     rpc clientQuery (ClientQuery) returns (ClientQueryResponse) {}
+
     rpc appendEntries(AppendRequest) returns (AppendResponse) {}
     rpc requestVote(VoteRequest) returns(VoteResponse){}
 //    rpc inspectServState(InspectRequest) returns(InspectResponse){}
+
+    rpc updateConfigs(UpdateConfigsRequest) returns (UpdateConfigsResponse){}
 }
 
 enum ReturnCode {
@@ -125,6 +128,17 @@ message VoteResponse{
     int32 lastLogIndex = 3;
     int32 lastCommitIndex = 4;
     bool voteGranted = 5;
+}
+
+message UpdateConfigsRequest{
+    int32 requestTimeout = 1;
+    int32 maxElectionTimeout = 2;
+    int32 keySizeLimit = 3;
+    int32 valSizeLimit = 4;
+}
+
+message UpdateConfigsResponse{
+    ReturnCode ret = 1;
 }
 
 //message InspectRequest{

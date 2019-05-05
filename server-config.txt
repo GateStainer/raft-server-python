@@ -1,1 +1,1 @@
-{"request_timeout": 100, "election_timeout": 5000, "key_size": 1048576, "value_size": 1048576, "process_limits": 10}
+{"request_timeout": 100, "election_timeout": 800, "app_entries_timeout": 200, "key_size": 1048576, "value_size": 1048576, "process_limits": 10}
