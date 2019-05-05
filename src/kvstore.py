@@ -62,8 +62,10 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # Condition variables
         self.appendEntriesCond = Condition()
         self.appliedStateMachCond = Condition()
-        # self.roleCond = Condition()
         self.lastCommittedTermCond = Condition()
+        self.leaderCond = Condition()
+        self.candidateCond = Condition()
+        self.followerCond = Condition()
 
         # Client related
         self.registeredClients = []
@@ -126,64 +128,86 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
 
     # Todo: check if all currentTerm and votedFor has .save() save persistent state to json file
     def save(self, current_term=-1, voted_for=-1):
-        if current_term != -1:
-            self.currentTerm = current_term
-        if voted_for != -1:
-            self.votedFor = voted_for
+        self.currentTerm = current_term
+        self.votedFor = voted_for
         persistent = {"currentTerm": self.currentTerm, "votedFor": self.votedFor}
         with open(self.persistent_file, 'w') as f:
             json.dump(persistent, f)
 
-    # Leader or Candidate steps down to follower
-    def step_down(self):
-        self.lastUpdate = time.time()
-        if self.role == KVServer.leader:
-            self.logger.critical(f"Raft[Role]: Candidate step down when higher term, \n"
-                                 f"log is <{self.log}>")
-            self.leader_state.kill()
-        elif self.role == KVServer.candidate:
-            self.election.kill()
-        else:  # follower state
-            try:
-                if self.election.is_alive():
-                    self.election.kill()
-            except AttributeError:
-                pass
-            self.follower_state.kill()
-        self.follower_state = KThread(target=self.follower, args=())
-        self.follower_state.start()
-        self.lastUpdate = time.time()
-
     def follower(self):
-        self.logger.critical(f'RAFT[Role]: Running as a follower')
-        self.role = KVServer.follower
         while True:
+            self.role = KVServer.follower
+            self.save(voted_for=-1)
+            self.logger.critical(f'RAFT[Role]: Running as a follower')
             while time.time() - self.lastUpdate <= self.currElectionTimeout:
-                pass
+                with self.followerCond:
+                    self.followerCond.wait(self.currElectionTimeout-(time.time() - self.lastUpdate))
             # self.logger.debug(f'Current time <{time.time()}>, last update <{self.lastUpdate}>, deduct to '
             #                   f'<{time.time() - self.lastUpdate}>election timeout <{self.currElectionTimeout}>')
-            start_time = time.time()
-            # kill old election thread
-            try:
-                if self.election.is_alive():
-                    self.election.kill()
-            except AttributeError:
-                pass
-            self.start_election()
+            with self.candidateCond:
+                self.candidateCond.notify_all()
+            with self.followerCond:
+                self.followerCond.wait()
+
+    def candidate(self):
+        with self.candidateCond:
+            self.candidateCond.wait()
+        while True:
+            self.role = KVServer.candidate
+            self.logger.critical(f'RAFT[Role]: Running as a candidate')
+            # Upon conversion to candidate, start election
+            # Increment current term, vote for self, reset election timer, send requestVote RPCs to all other servers
+
             # self.logger.critical(f'RAFT[Vote]: Server <{self.id}> initiated voting for term <{self.currentTerm}> '
             #                      f'took <%.4f> seconds' % (time.time()-start_time))
-            self.currElectionTimeout = random.uniform(self.maxElectionTimeout / 2, self.maxElectionTimeout) / 1000
             self.lastUpdate = time.time()
+            self.election = KThread(target=self.initiateVote, args=())
+            self.election.start()
+            self.save(current_term=self.currentTerm+1, voted_for=self.id)
+            self.currElectionTimeout = random.uniform(self.maxElectionTimeout / 2, self.maxElectionTimeout) / 1000
+            self.numVotes = 1
+            self.logger.info(f'RAFT[Vote]: Start election, voted for self <{self.id}> w/ term <{self.currentTerm}> '
+                             f'election timeout: <%.4f> seconds' % self.currElectionTimeout)
+            while time.time() - self.lastUpdate <= self.currElectionTimeout:
+                with self.candidateCond:
+                    self.candidateCond.wait(self.currElectionTimeout-(time.time() - self.lastUpdate))
+                if self.numVotes >= self.majority or self.role == KVServer.follower:
+                    break
+            self.save(voted_for=-1)
+            if self.numVotes >= self.majority:
+                with self.leaderCond:
+                    self.leaderCond.notify_all()
+                with self.candidateCond:
+                    self.logger.critical(f"in candidate, larger than majority")
+                    self.candidateCond.wait()
+            elif self.role == KVServer.follower:
+                with self.followerCond:
+                    self.followerCond.notify_all()
+                with self.candidateCond:
+                    self.candidateCond.wait()
 
-    def start_election(self):
-        # Create a new thread for leader election
-        self.role = KVServer.candidate
-        self.election = KThread(target=self.initiateVote, args=())
-        self.election.start()
-        self.save(current_term=self.currentTerm+1, voted_for=self.id)
-        self.logger.info(f'RAFT[Vote]: Start election, voted for self <{self.id}> w/ term <{self.currentTerm}> '
-                         f'election timeout: <%.4f> seconds' % self.currElectionTimeout)
-        self.numVotes = 1
+    def leader(self):
+        while True:
+            # mcip: Use condition to control instead
+            with self.leaderCond:
+                self.logger.critical(f"reached leader111, larger than majority")
+                self.leaderCond.wait()
+                self.logger.critical(f"reached leader222, larger than majority")
+            self.logger.critical(f"reached leader333, larger than majority")
+            self.role = KVServer.leader
+            self.save(voted_for=-1)
+            self.logger.critical(f'RAFT[Role]: Running as a leader')
+            self.leaderID = self.id
+            # for each server it's the index of next log entry to send to that server
+            # init to leader last log index + 1
+            self.nextIndex = [self.lastLogIndex + 1] * len(self.addresses)
+            # for each server, index of highest log entry known to be replicated on server
+            # init to 0, increase monotonically
+            self.matchIndex = [0] * len(self.addresses)
+            # Todo: might need debugging?
+            # Upon becoming leader, append no-op entry to log (6.4)
+            self.logModify([self.currentTerm, f"no-op: leader-{self.id}", f"no-op"], LogMod.APPEND)
+            self.append_entries()
 
     def initiateVote(self):
         for idx, addr in enumerate(self.addresses):
@@ -224,7 +248,6 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 self.logger.critical(f'RAFT[Vote]: vote granted for server <{req_candidate_id}> '
                                      f'since it has higher term <{req_term}>')
                 self.save(current_term=req_term, voted_for=req_candidate_id)
-                self.step_down()
                 # step_down_kth = KThread(target=self.step_down, args=())
                 # step_down_kth.start()
             return kvstore_pb2.VoteResponse(term=self.currentTerm, voteGranted=vote_granted)
@@ -252,42 +275,24 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 if self.role == KVServer.candidate:
                     self.numVotes += 1
                     if self.numVotes >= self.majority:
-                        self.role = KVServer.leader
-                        # kill election and follower thread
-                        if self.election.is_alive():
-                            self.election.kill()
-                        self.follower_state.kill()
-                        # Create a thread for leader thread
-                        self.leader_state = KThread(target=self.leader, args=())
-                        self.leader_state.start()
+                        with self.candidateCond:
+                            self.logger.critical(f"thread_election, larger than majority")
+                            self.candidateCond.notify_all()
             else:
                 self.logger.info(f'RAFT[Vote] vote rejected from server: <{idx}> w/ term: {req_vote_resp.term}')
                 # discover higher term
                 if req_vote_resp.term > self.currentTerm:
                     self.save(current_term=req_vote_resp.term)
-                    self.step_down()
+                    self.role = KVServer.follower
+                    with self.candidateCond:
+                        self.candidateCond.notify_all()
         except Exception as e:
             self.logger.error("RAFT[Vote]: f(): thread_election:")
             self.logger.error(e)
 
-    def leader(self):
-        self.logger.critical(f'RAFT[Role]: Running as a leader')
-        self.leaderID = self.id
-        self.role = KVServer.leader
-        # for each server it's the index of next log entry to send to that server
-        # init to leader last log index + 1
-        self.nextIndex = [self.lastLogIndex + 1] * len(self.addresses)
-        # for each server, index of highest log entry known to be replicated on server
-        # init to 0, increase monotonically
-        self.matchIndex = [0] * len(self.addresses)
-        # Todo: might need debugging?
-        # Upon becoming leader, append no-op entry to log (6.4)
-        self.logModify([self.currentTerm, f"no-op: leader-{self.id}", f"no-op"], LogMod.APPEND)
-        self.append_entries()
-
     # Leader sends append_entry message as log replication and heart beat
     def append_entries(self):
-        while True:
+        while self.role == KVServer.leader:
             # Todo: for debugging only
             # # self.debug1 += 1
             # self.logModify([self.debug1, "aa", "bb"], LogMod.APPEND)
@@ -375,6 +380,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             self.logger.warning(f'RAFT[ABORTED]: append entries from server <{self.leaderID}> '
                                 f'to <{self.id}>, because of ChaosMonkey')
         else:
+            # Todo: if election timeout elapse without receiving AppendEntries RPC from current leader or granting vote
+            #  to candidate: convert to candidate
             self.lastUpdate = time.time()
             success = False
             try:
@@ -422,6 +429,10 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                                                     f'<{request.prevLogIndex + itr}>')
                                 self.logModify(request.prevLogIndex + itr, LogMod.DELETION)
                             itr += 1
+                    # Todo: convert it to follower
+                    if self.role == KVServer.candidate:
+                        with self.followerCond:
+                            self.followerCond.notify_all()
                     # Heartbeat
                     if len(tmp_entries) == 0:
                         self.logger.info("RAFT[Log]: Received a heartbeat")
@@ -442,6 +453,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                             app_state_mach_kth.start()
                     # int32 term = 1;
                     # bool success = 2;
+                self.lastUpdate = time.time()
                 return kvstore_pb2.AppendResponse(term=self.currentTerm, success=success)
             except Exception as e:
                 self.logger.error("RAFT[Vote]: f(): appendEntries:")
@@ -497,8 +509,12 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
 
     def run(self):
         # Create a thread to run as follower
-        self.follower_state = KThread(target=self.follower, args=())
-        self.follower_state.start()
+        leader_state = KThread(target=self.leader, args=())
+        leader_state.start()
+        candidate_state = KThread(target=self.candidate, args=())
+        candidate_state.start()
+        follower_state = KThread(target=self.follower, args=())
+        follower_state.start()
 
     # Checkpoint 1 Get Put Methods
     # Todo: no longer needed?
