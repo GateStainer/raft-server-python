@@ -89,7 +89,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.logger.setLevel(logging.DEBUG)
         # create formatter and add it to the handlers
         formatter = logging.Formatter('[%(asctime)s,%(msecs)d %(levelname)s]: %(message)s',
-                                      datefmt='%H:%M:%S')
+                                      datefmt='%M:%S')
         # create file handler which logs even debug messages
         os.makedirs(os.path.dirname('log/logger-%d.txt' % self.id), exist_ok=True)
         fh = logging.FileHandler('log/logger-%d.txt' % self.id)
@@ -109,7 +109,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         #                     datefmt='%H:%M:%S')
         # self.logger = logging.getLogger('raft')
         # self.logger.setLevel(logging.NOTSET)
-        self.logger.debug(f'RAFT[Chaos]: Initial ChaosMonkey matrix: \n<{self.cmserver}>')
+        self.logger.debug(f'[Chaos]: Initial ChaosMonkey matrix: \n<{self.cmserver}>')
 
         ### Volatile state on leaders
         self.nextIndex = [0] * len(addresses)  # index of next log entry to send to that server
@@ -138,14 +138,16 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
 
     def follower(self):
         while True:
-            self.role = KVServer.follower
+            # self.role = KVServer.follower  # Todo: is this correct
+            self.logger.critical(f'[Role]: Running as a follower, elec timeout <%.4f>' % self.currElectionTimeout)
             self.save(current_term=self.currentTerm, voted_for=-1)
-            self.logger.critical(f'RAFT[Role]: Running as a follower')
+            self.lastUpdate = time.time()
             while time.time() - self.lastUpdate <= self.currElectionTimeout:
                 with self.followerCond:
-                    self.followerCond.wait(self.currElectionTimeout-(time.time() - self.lastUpdate))
+                    self.followerCond.wait(self.currElectionTimeout - (time.time() - self.lastUpdate))  # -elapsed time
             # self.logger.debug(f'Current time <{time.time()}>, last update <{self.lastUpdate}>, deduct to '
             #                   f'<{time.time() - self.lastUpdate}>election timeout <{self.currElectionTimeout}>')
+            self.role = KVServer.candidate  # Todo: change to candidate here?
             with self.candidateCond:
                 self.candidateCond.notify_all()
             with self.followerCond:
@@ -155,28 +157,27 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         with self.candidateCond:
             self.candidateCond.wait()
         while True:
-            self.role = KVServer.candidate
-            self.logger.critical(f'RAFT[Role]: Running as a candidate')
+            self.logger.critical(f'[Role]: Running as a candidate, elec timeout <%.4f>' % self.currElectionTimeout)
             # Upon conversion to candidate, start election
             # Increment current term, vote for self, reset election timer, send requestVote RPCs to all other servers
 
             # self.logger.critical(f'RAFT[Vote]: Server <{self.id}> initiated voting for term <{self.currentTerm}> '
             #                      f'took <%.4f> seconds' % (time.time()-start_time))
-            self.lastUpdate = time.time()
+            self.save(current_term=self.currentTerm+1, voted_for=self.id)
+            self.numVotes = 1
+            self.currElectionTimeout = random.uniform(self.maxElectionTimeout / 2, self.maxElectionTimeout) / 1000
             self.election = KThread(target=self.initiateVote, args=())
             self.election.start()
-            self.save(current_term=self.currentTerm+1, voted_for=self.id)
-            self.currElectionTimeout = random.uniform(self.maxElectionTimeout / 2, self.maxElectionTimeout) / 1000
-            self.numVotes = 1
-            self.logger.info(f'RAFT[Vote]: Start election, voted for self <{self.id}> w/ term <{self.currentTerm}> '
-                             f'election timeout: <%.4f> seconds' % self.currElectionTimeout)
-            while time.time() - self.lastUpdate <= self.currElectionTimeout:
+            self.logger.info(f'[Vote]: Start, voted for self <{self.id}> term <{self.currentTerm}> '
+                             f'election timeout: <%.4f>' % self.currElectionTimeout)
+            self.lastUpdate = time.time()
+            while time.time() - self.lastUpdate <= self.currElectionTimeout and self.role == KVServer.candidate:
                 with self.candidateCond:
-                    self.candidateCond.wait(self.currElectionTimeout-(time.time() - self.lastUpdate))
+                    self.candidateCond.wait(self.currElectionTimeout-(time.time() - self.lastUpdate))  # - elapse time
                 if self.numVotes >= self.majority or self.role == KVServer.follower:
                     break
             self.save(current_term=self.currentTerm, voted_for=-1)
-            if self.numVotes >= self.majority:
+            if self.role == KVServer.leader:
                 with self.leaderCond:
                     self.leaderCond.notify_all()
                 with self.candidateCond:
@@ -187,9 +188,11 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     self.followerCond.notify_all()
                 with self.candidateCond:
                     self.candidateCond.wait()
-            if time.time() - self.lastUpdate <= self.currElectionTimeout:
-                with self.candidateCond:
-                    self.candidateCond.wait(self.currElectionTimeout-(time.time() - self.lastUpdate))
+            # Todo: is this needed?
+            # self.lastUpdate = time.time()
+            # if time.time() - self.lastUpdate <= self.currElectionTimeout:
+            #     with self.candidateCond:
+            #         self.candidateCond.wait(self.currElectionTimeout-(time.time() - self.lastUpdate))
 
     def leader(self):
         while True:
@@ -197,9 +200,20 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             with self.leaderCond:
                 # self.logger.critical(f"reached leader111, larger than majority")
                 self.leaderCond.wait()
-            self.role = KVServer.leader
-            self.save(current_term=self.currentTerm, voted_for=-1)  # Todo: voted_for = 1 here?
-            self.logger.critical(f'RAFT[Role]: Running as a leader')
+            if self.role == KVServer.follower:
+                with self.followerCond:
+                    self.followerCond.notify_all()
+                with self.leaderCond:
+                    self.leaderCond.wait()
+            elif self.role == KVServer.candidate:
+                with self.candidateCond:
+                    self.candidateCond.notify_all()
+                with self.leaderCond:
+                    self.leaderCond.wait()
+
+            # self.role = KVServer.leader  # Todo: is this correct?
+            self.logger.critical(f'[Role]: Running as a leader')
+            self.save(current_term=self.currentTerm, voted_for=-1)
             self.leaderID = self.id
             # for each server it's the index of next log entry to send to that server
             # init to leader last log index + 1
@@ -209,19 +223,79 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             self.matchIndex = [0] * len(self.addresses)
             # Todo: might need debugging?
             # Upon becoming leader, append no-op entry to log (6.4)
-            self.logModify([self.currentTerm, f"no-op: leader-{self.id}", f"no-op"], LogMod.APPEND)
+            self.logModify([self.currentTerm, f"no-op: leader-{self.id}", "no-op"], LogMod.APPEND)
             self.append_entries()
 
     def initiateVote(self):
+        # Todo: mcip, make sure the term is the same while request vote????
+        req_term = self.currentTerm
         for idx, addr in enumerate(self.addresses):
             if idx == self.id:
                 continue
             # Create a thread for each request vote
-            election_thread = KThread(target=self.thread_election, args=(idx, addr,))
+            election_thread = KThread(target=self.thread_election, args=(idx, addr, req_term, ))
             election_thread.start()
 
-    def requestVote(self, request, context):
-        self.lastUpdate = time.time()
+    # Todo: All servers: If RPC request or response contains term T> currentTerm, set current term = T,
+    #  convert to follower
+    def convToFollowerIfHigherTerm(self, term, voted_for):
+        if term > self.currentTerm:
+            if self.role == KVServer.candidate:
+                self.save(current_term=term, voted_for=voted_for)
+                self.role = KVServer.follower
+                with self.candidateCond:
+                    self.candidateCond.notify_all()
+            elif self.role == KVServer.leader:  # leader
+                self.save(current_term=term, voted_for=voted_for)
+                self.role = KVServer.follower
+                with self.leaderCond:
+                    self.leaderCond.notify_all()
+
+    # Todo: Add chaos monkey?
+    def thread_election(self, idx, addr, req_term):
+        try:
+            # Todo: shouldn't always increment term here ???
+            vote_request = kvstore_pb2.VoteRequest(term=self.currentTerm, candidateID=self.id,
+                                                   lastLogIndex=self.lastLogIndex, lastLogTerm=req_term)
+            # with grpc.insecure_channel(addr) as channel:
+            channel = grpc.insecure_channel(addr)
+            grpc.channel_ready_future(channel).result()
+            stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
+            # self.logger.debug(f'Send vote request to server: <{idx}>')
+            req_vote_resp = stub.requestVote(vote_request, timeout=self.requestTimeout)  # timeout keyword ok?
+            # Todo: mcip, does this improve?
+            num_rej_votes = 0
+            # Todo: Add lock here to consider concurrency
+            if req_vote_resp.voteGranted:
+                self.logger.info(f'[Vote]: received from <{idx}>, vote count: <{self.numVotes}>')
+                if self.role == KVServer.candidate:
+                    self.numVotes += 1
+                    if self.numVotes >= self.majority:
+                        self.role = KVServer.leader
+                        with self.candidateCond:
+                            # self.logger.critical(f"thread_election, larger than majority")
+                            self.candidateCond.notify_all()
+            else:
+                self.logger.info(f'[Vote]: rejected from <{idx}> its term: {req_vote_resp.term}')
+                # Todo: added by mcip, does this actually improve?
+                num_rej_votes += 1
+                if self.role == KVServer.follower and req_vote_resp.term > self.currentTerm:
+                    self.save(current_term=req_vote_resp.term, voted_for=-1)
+                # Todo: All servers: If RPC request or response contains term T> currentTerm, set current term = T,
+                #  convert to follower
+                self.convToFollowerIfHigherTerm(req_vote_resp.term, voted_for=-1)
+                    # self.role = KVServer.follower
+                    # with self.candidateCond:
+                    #     self.candidateCond.notify_all()
+                # elif num_rej_votes > self.majority:
+                #     self.save(current_term=self.currentTerm, votedFor=-1)
+        except Exception as e:
+            self.logger.error("[Vote]: f() thread_election:")
+            self.logger.error(e)
+
+    def requestVote(self, request, context):  # Receiving vote request and process
+        # Todo: not needed?
+        # self.lastUpdate = time.time()
         try:
             req_term = request.term
             req_candidate_id = request.candidateID
@@ -235,70 +309,34 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             if req_term < self.currentTerm or req_last_log_ind < self.lastLogIndex or \
                     req_last_log_term < self.lastLogTerm or \
                     (self.votedFor != -1 and self.votedFor != req_candidate_id):
-                if req_term > self.currentTerm:
-                    self.save(current_term=req_term, voted_for=self.votedFor)
                 vote_granted = False
-                self.logger.info(f'RAFT[Vote]: vote request from <{req_candidate_id}> is denied, '
-                                  f'currentTerm: <{self.currentTerm}>'
-                                  f'\n reason: <{req_term < self.currentTerm}>, <{req_last_log_ind < self.lastLogIndex}>'
-                                  f', <{req_last_log_term < self.lastLogTerm}> or voted for another')
+                self.logger.info(f'[Vote]: reject vote request from <{req_candidate_id}>, '
+                                 f'currentTerm <{self.currentTerm}>'
+                                 f'\n reason: <{req_term < self.currentTerm}>, <{req_last_log_ind < self.lastLogIndex}>'
+                                 f', <{req_last_log_term < self.lastLogTerm}> or voted for another')
+                if self.role == KVServer.follower and req_term > self.currentTerm:
+                    self.save(current_term=req_term, voted_for=-1)
+                # Todo: All servers: If RPC request or response contains term T> currentTerm, set current term = T,
+                #  convert to follower
+                self.convToFollowerIfHigherTerm(req_term, voted_for=req_candidate_id)
             elif req_term == self.currentTerm:
+                self.lastUpdate = time.time()
                 self.save(current_term=self.currentTerm, voted_for=req_candidate_id)  # TODO: Add lock here?
-                if vote_granted:
-                    self.logger.info(f'RAFT[Vote]: vote granted for server <{req_candidate_id}> w/ term <{self.currentTerm}>')
+                self.logger.info(f'[Vote]: vote granted for <{req_candidate_id}> w term <{self.currentTerm}>')
             # Find higher term in RequestVote message
             elif req_term > self.currentTerm:
-                self.logger.critical(f'RAFT[Vote]: vote granted for server <{req_candidate_id}> '
-                                     f'since it has higher term <{req_term}>')
-                self.save(current_term=req_term, voted_for=req_candidate_id)
-                # step_down_kth = KThread(target=self.step_down, args=())
-                # step_down_kth.start()
-            self.lastUpdate = time.time()
+                self.lastUpdate = time.time()
+                if self.role == KVServer.follower:
+                    self.save(current_term=req_term, voted_for=req_candidate_id)
+                # Todo: All servers: If RPC request or response contains term T> currentTerm, set current term = T,
+                #  convert to follower
+                self.convToFollowerIfHigherTerm(req_term, voted_for=req_candidate_id)
+                self.logger.critical(f'[Vote]: vote granted for <{req_candidate_id}> '
+                                     f'due to higher term <{req_term}>')
+            # Todo: mcip: if granting the vote to someone, should set back the lastUpdate time?
             return kvstore_pb2.VoteResponse(term=self.currentTerm, voteGranted=vote_granted)
         except Exception as e:
-            self.logger.error("RAFT[Vote]: f(): requestVote:")
-            self.logger.error(e)
-
-    # Todo: Add chaos monkey?
-    def thread_election(self, idx, addr):
-        try:
-            vote_request = kvstore_pb2.VoteRequest(term=self.currentTerm, candidateID=self.id,
-                                                   lastLogIndex=self.lastLogIndex, lastLogTerm=self.lastLogTerm)
-            # with grpc.insecure_channel(addr) as channel:
-            channel = grpc.insecure_channel(addr)
-            grpc.channel_ready_future(channel).result()
-            stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
-            # self.logger.debug(f'Send vote request to server: <{idx}>')
-            req_vote_resp = stub.requestVote(
-                vote_request, timeout=self.requestTimeout)  # timeout keyword ok?
-            # Todo: mcip, does this improve?
-            num_rej_votes = 0
-            # Todo: mcip: add last update time
-            self.lastUpdate = time.time()
-            # TODO: Add lock here to consider concurrency
-            if req_vote_resp.voteGranted:
-                self.logger.info(f'vote received from server <{idx}>, vote count: <{self.numVotes}>, '
-                                  f'majority: <{self.majority}>')
-                if self.role == KVServer.candidate:
-                    self.numVotes += 1
-                    if self.numVotes >= self.majority:
-                        with self.candidateCond:
-                            # self.logger.critical(f"thread_election, larger than majority")
-                            self.candidateCond.notify_all()
-            else:
-                # Todo: added by mcip, does this actually improve?
-                num_rej_votes += 1
-                self.logger.info(f'RAFT[Vote]: vote request to <{idx}> is rejected w/ term: {req_vote_resp.term}')
-                # discover higher term
-                if req_vote_resp.term > self.currentTerm:
-                    self.save(current_term=req_vote_resp.term, voted_for=-1)
-                    self.role = KVServer.follower
-                    with self.candidateCond:
-                        self.candidateCond.notify_all()
-                elif num_rej_votes > self.majority:
-                    self.save(current_term=self.currentTerm, votedFor=-1)
-        except Exception as e:
-            self.logger.error("RAFT[Vote]: f(): thread_election:")
+            self.logger.error("[Vote]: f() requestVote:")
             self.logger.error(e)
 
     # Leader sends append_entry message as log replication and heart beat
@@ -308,21 +346,22 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             # # self.debug1 += 1
             # self.logModify([self.debug1, "aa", "bb"], LogMod.APPEND)
             # self.logModify([self.debug1, "bb", "cc"], LogMod.APPEND)
+            app_ent_term = self.currentTerm
             for idx, addr in enumerate(self.addresses):
                 if idx == self.id:
                     continue
                 # Create a thread for each append_entry message
-                append_thread = KThread(target=self.thread_append_entry, args=(idx, addr,))
+                append_thread = KThread(target=self.thread_append_entry, args=(idx, addr, app_ent_term,))
                 append_thread.start()
             # Send append entry every following seconds, or be notified and wake up
             # Todo: will release during wait
             with self.appendEntriesCond:
                 self.appendEntriesCond.wait(timeout=self.appendEntriesTimeout)
 
-    def thread_append_entry(self, idx, addr):
+    def thread_append_entry(self, idx, addr, app_ent_term):
         try:
             append_request = kvstore_pb2.AppendRequest()
-            append_request.term = self.currentTerm  # int32 term = 1;
+            append_request.term = app_ent_term  # int32 term = 1;
             append_request.leaderID = self.id  # int32 leaderID = 2;
             append_request.prevLogIndex = self.nextIndex[idx]  # int32 prevLogIndex = 3;
             append_request.prevLogTerm = 0  # int32 prevLogTerm = 4;
@@ -336,7 +375,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     entry.term = row[0]
                     entry.key = row[1]
                     entry.val = row[2]
-                self.nextIndex[idx] = self.lastLogIndex + 1
+            self.nextIndex[idx] = self.lastLogIndex + 1  # Todo: should inc to +1 here?
             # with grpc.insecure_channel(addr) as channel:
             channel = grpc.insecure_channel(addr)
             grpc.channel_ready_future(channel).result()
@@ -344,28 +383,32 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             # bool success = 2;
             stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
             if random.uniform(0, 1) < self.cmserver.fail_mat[self.leaderID][self.id]:
-                self.logger.warning(f'RAFT[ABORTED]: we will not receive from <{self.leaderID}> '
+                self.logger.warning(f'[ABORTED]: we will not receive from <{self.leaderID}> '
                                     f'because of ChaosMonkey')
             else:
-                self.logger.debug(f'RAFT[AP_En]: thread_append_entry to <{idx}>, '
-                                  f'req last log <{last_req_log_idx}>')
+                self.logger.info(f'[AP_En]: thread_append_entry to <{idx}>, '
+                                 f'req last log <{last_req_log_idx}>')
+                                 # f'req entries \n<{append_request.entries}>')
                 append_entry_response = stub.appendEntries(
                     append_request, timeout=self.requestTimeout)
-                self.lastUpdate = time.time()
                 if not append_entry_response.success:
-                    self.logger.info(f"RAFT[AP_En]: thread_append_entry to <{idx}> failed")
-                    # Failed since another server is leader now
-                    if append_entry_response.term > self.currentTerm:
-                        self.save(current_term=append_entry_response.term, voted_for=-1)  # voted_for = -1 here
-                        # self.step_down()
+                    self.logger.info(f"[AP_En]: thread_append_entry to <{idx}> failed, "
+                                     f"its term <{append_entry_response.term}>, leader's <{self.currentTerm}>")
                     # Failed because of log inconsistency, decrement nextIndex and retry
+                    if append_entry_response.term <= self.currentTerm:
+                        self.logger.info(f"[AP_En]: log inconsistency, nextIndex for <{idx}> dec from "
+                                         f"<{self.nextIndex[idx]}> to <{max(append_request.prevLogIndex - 1, 0) }>")
+                        # Todo: how to decrement correctly
+                        self.nextIndex[idx] = max(append_request.prevLogIndex - 1, 0)
                     else:
-                        self.nextIndex[idx] = max(self.nextIndex[idx] - 1, 0)  # Todo: how to decrement correctly
+                        # Todo: All servers: If RPC request or response contains term T> currentTerm,
+                        #  set current term = T, convert to follower
+                        self.convToFollowerIfHigherTerm(append_entry_response.term, voted_for=-1)
                 # Success
                 else:
-                    self.logger.info(f"RAFT[AP_En]: thread_append_entry to <{idx}> success")
+                    self.logger.info(f"[AP_En]: thread_append_entry to <{idx}> success")
                     self.matchIndex[idx] = last_req_log_idx
-                    self.logger.debug(f'RAFT[KVStore]: matchIndex: <{self.matchIndex}>')
+                    self.logger.debug(f'[KVStore]: matchIndex: <{self.matchIndex}>')
                     n_list = sorted(self.matchIndex)
                     # TODO: write to disk upon majority
                     # if there exists such N that N> commitIndex and majority of matchIndex[i] >= N
@@ -377,7 +420,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                         disk_write_kth = KThread(target=self.applyToStateMachine, args=(self.lastApplied,))
                         disk_write_kth.start()
         except Exception as e:
-            self.logger.error("RAFT[Vote]: f(): thread_append_entry: most likely name resolution error")
+            self.logger.error("[Vote]: f() thread_append_entry, most likely name resolution error")
             self.logger.error(e)  # Todo: Name resolution error
 
     def appendEntries(self, request, context):  # receiving/server side
@@ -389,7 +432,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # int32 leaderCommit = 6;
         self.leaderID = request.leaderID
         if random.uniform(0, 1) < self.cmserver.fail_mat[self.leaderID][self.id]:
-            self.logger.warning(f'RAFT[ABORTED]: append entries from server <{self.leaderID}> '
+            self.logger.warning(f'[ABORTED]: append entries from server <{self.leaderID}> '
                                 f'to <{self.id}>, because of ChaosMonkey')
         else:
             # Todo: if election timeout elapse without receiving AppendEntries RPC from current leader or granting vote
@@ -397,11 +440,18 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             self.lastUpdate = time.time()
             success = False
             try:
-                # # Todo: mcip: should step down when receiver is candidate but encountering equal/higher term???
-                # if self.role == KVServer.candidate and request.term >= self.lastLogTerm:
-                #     self.save(current_term=request.term, voted_for=request.leaderID)
-                #     self.step_down()
-                # self.logger.info("Received appendEntries")
+                # Todo: If candidates receive AppendEntries RPC from a leader, convert to follower
+                #  mcip: request term should be useless coz of last log term??????
+                if self.role == KVServer.candidate:
+                    self.save(current_term=max(self.lastLogTerm, request.term), voted_for=-1)
+                    self.role = KVServer.follower
+                    with self.candidateCond:
+                        self.candidateCond.notify_all()
+                else:
+                    # Todo: All servers: If RPC request or response contains term T> currentTerm,
+                    #  set current term = T, convert to follower
+                    self.convToFollowerIfHigherTerm(request.term, voted_for=-1)
+
                 tmp_entries = []
                 for row in request.entries:
                     r = [row.term, row.key, row.val]
@@ -409,22 +459,31 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     # self.logger.info(f'row: <{r}>')
                 # reply false if term < currentTerm,
                 # or log doesn't log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
+                # Todo: if it doesn't match the term, it will decrement and resend, thus following will remove entries
                 if request.term < self.currentTerm or request.prevLogIndex > len(self.log) \
                         or (request.prevLogIndex < len(self.log) and
                             self.log[request.prevLogIndex][0] != request.prevLogTerm):
-                    # if request.term < self.currentTerm:  # Todo: do we need to start election here?
-                    # Todo: whether this is correct?
-                    self.save(current_term=max(self.currentTerm, request.term), voted_for=-1)
-                    self.logger.warning(f'RAFT: appendEntries received on server <{self.id}>, will return false; ')
-                    self.logger.warning(f'RAFT[App_Entries]: <{request.term < self.currentTerm}>, '
+
+                    self.logger.warning(f'[AP_En]: received on <{self.id}>, will return false to <{self.leaderID}>')
+                    self.logger.warning(f'[AP_En]: <{request.term < self.currentTerm}>, '
                                         f'<{request.prevLogIndex > len(self.log)}>, '
                                         f'<{(request.prevLogIndex < len(self.log) and self.log[request.prevLogIndex][0] != request.prevLogTerm)}>')
                     self.logger.info(f'Parameters for false: req term: <{request.term}>, cur term: '
                                      f'<{self.currentTerm}>, req prevLogIdx: <{request.prevLogIndex}>, '
                                      f'length of server log <{len(self.log)}>')
                     if request.prevLogIndex < len(self.log):
-                        self.logger.info(f'term of log on prev log index: <{self.log[request.prevLogIndex][0]}>'
+                        self.logger.info(f'term of log on prev log index: <{self.log[request.prevLogIndex][0]}>, '
                                          f'request prev log term: <{request.prevLogTerm}>')
+                        #     existing entry conflicts with a new one, same idx different terms,
+                        #     delete the existing entry and all that follow it
+                        # self.logger.info(f'RAFT: checking conflicting entries')
+                        itr = 0
+                        for a, b in zip(tmp_entries, self.log[request.prevLogIndex:]):
+                            if a != b:
+                                self.logger.warning(f'[Log]: Found conflict at index: '
+                                                    f'<{request.prevLogIndex + itr}>')
+                                self.logModify(request.prevLogIndex + itr, LogMod.DELETION)
+                            itr += 1
                 else:
                     self.save(current_term=max(self.currentTerm, request.term), voted_for=-1)
                     # self.logger.info("RAFT: AppendEntries should succeed unless there is conflict entries")
@@ -436,19 +495,16 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     if len(self.log) > 0:
                         for a, b in zip(tmp_entries, self.log[request.prevLogIndex:]):
                             if a != b:
-                                self.logger.warning(f'RAFT[Log]: Found conflict at index: '
+                                self.logger.warning(f'[Log]: Found conflict at index: '
                                                     f'<{request.prevLogIndex + itr}>')
                                 self.logModify(request.prevLogIndex + itr, LogMod.DELETION)
                             itr += 1
-                    # Todo: convert it to follower
-                    if self.role == KVServer.candidate:
-                        with self.followerCond:
-                            self.followerCond.notify_all()
                     # Heartbeat
                     if len(tmp_entries) == 0:
-                        self.logger.info("RAFT[Log]: Received a heartbeat")
+                        self.logger.info("[Log]: received a heartbeat")
                     # Normal append entries
                     else:
+                        self.logger.info(f"[Log]: append entries, leader commit <{request.leaderCommit}>")
                         # Append any new entries not already in the log
                         to_append_length = request.prevLogIndex + len(tmp_entries) - len(self.log)
                         # self.logger.debug(f'RAFT: length of log to append: <{to_append_length}>')
@@ -459,6 +515,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                         # self.logger.debug(f'RAFT: Checking if we need to write to disk: <{request.leaderCommit}>,'
                         #                   f'<{self.commitIndex}>, <{self.lastLogIndex}>')
                         if request.leaderCommit > self.lastApplied:
+                            self.logger.info(f"[Log]: apply to state machine, leader commit <{request.leaderCommit}> "
+                                             f"last applied <{self.lastApplied}>")
                             self.commitIndex = min(request.leaderCommit, self.lastLogIndex)
                             app_state_mach_kth = KThread(target=self.applyToStateMachine, args=(self.lastApplied,))
                             app_state_mach_kth.start()
@@ -494,7 +552,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 self.lastCommittedTermCond.notify_all()
         if self.lastLogTerm > self.currentTerm:
             self.save(current_term=self.lastLogTerm, voted_for=self.votedFor)
-        self.logger.info(f'RAFT[Log]: Log updated on disk of server <{self.id}> ,'
+        self.logger.info(f'[Log]: Log updated on disk of server <{self.id}> ,'
                           f'last log index now: <{self.lastLogIndex}>'
                           f'log is: <{self.log}>')
 
@@ -509,7 +567,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # Apply command in log order, notify all upon completion
         with self.appliedStateMachCond:
             self.appliedStateMachCond.notify_all()
-        self.logger.info(f'RAFT[StateMach]: Last applied index: <{self.lastApplied}>, '
+        self.logger.info(f'[StateMach]: Last applied index: <{self.lastApplied}>, '
                           f'state machine updated to: <{self.stateMachine}>')
 
     # def readWithKey(self, key):
@@ -562,7 +620,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 # string value = 1;
                 # ClientRPCStatus status = 2;
                 # int32 leaderHint = 3;
-                self.logger.info(f'RAFT[KVStore]: Get redirect to leader <{self.leaderID}>')
+                self.logger.info(f'[KVStore]: Get redirect to leader <{self.leaderID}>')
                 return kvstore_pb2.GetResponse(value="", status=kvstore_pb2.NOT_LEADER, leaderHint=self.leaderID)
             try:
                 # Wait until last committed entry is from leader's term
@@ -579,12 +637,12 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     self.appliedStateMachCond.wait_for(lambda: self.lastApplied >= read_index)
                 # Process query
                 # Reply OK with state machine output
-                self.logger.info(f'RAFT[KVStore]: Get success: <{request.key}, {self.stateMachine[request.key]}>')
+                self.logger.info(f'[KVStore]: Get success: <{request.key}, {self.stateMachine[request.key]}>')
                 context.set_code(grpc.StatusCode.OK)
                 return kvstore_pb2.GetResponse(value=self.stateMachine[request.key], status=kvstore_pb2.OK2CLIENT,
                                                leaderHint=self.id)
             except KeyError:
-                self.logger.warning(f'RAFT[KVStore]: Get failed, no such key: [{request.key}]')
+                self.logger.warning(f'[KVStore]: Get failed, no such key: [{request.key}]')
                 context.set_code(grpc.StatusCode.CANCELLED)
                 return kvstore_pb2.GetResponse(value="", status=kvstore_pb2.ERROR2CLIENT, leaderHint=self.id)
         except Exception as e:
@@ -635,12 +693,12 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             # Todo: no need for state machine output for put?
             # Reply OK with state machine output
             if self.lastApplied >= put_log_ind:
-                self.logger.info(f'RAFT[KVStore]: Server put success on leader <{self.id}>')
+                self.logger.info(f'[KVStore]: Server put success on leader <{self.id}>')
                 context.set_code(grpc.StatusCode.OK)  # Todo: why is this needed?
                 return kvstore_pb2.PutResponse(status=kvstore_pb2.OK2CLIENT, response=self.stateMachine[request.key],
                                                leaderHint=self.id)
             else:
-                self.logger.warning(f'RAFT[KVStore]: Server put error (timeout?) on leader <{self.id}>')
+                self.logger.warning(f'[KVStore]: Server put error (timeout?) on leader <{self.id}>')
                 context.set_code(grpc.StatusCode.CANCELLED)
                 return kvstore_pb2.PutResponse(status=kvstore_pb2.ERROR2CLIENT, response="", leaderHint=self.id)
         except Exception as e:
@@ -667,7 +725,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     self.clientReqResults[cur_last_log_ind] = ["", -1]   # init client result dictionary
                 # Apply command in log order, allocating session for new client
                 with self.appliedStateMachCond:
-                    self.logger.info(f'RAFT[Client]: Register client: lastApplied, <{self.lastApplied}>, '
+                    self.logger.info(f'[Client]: Register client: lastApplied, <{self.lastApplied}>, '
                                       f'cur_last_log_ind, <{cur_last_log_ind}>, matchIndex, <{self.matchIndex}>')
                     self.appliedStateMachCond.wait_for(lambda: self.lastApplied >= cur_last_log_ind)
                 # Todo: allocating new session?
