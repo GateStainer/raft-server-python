@@ -54,6 +54,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         self.commitIndex = -1  # known to be commited, init to 0
         # if larger than lastApplied, apply log to state machine
         self.lastApplied = -1  # index of highest log entry applied to state machine, init to 0
+
+
         self.role = KVServer.candidate
         self.leaderID = -1
         self.peers = []
@@ -127,7 +129,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 self.votedFor = data_store["votedFor"]
 
     # Todo: check if all currentTerm and votedFor has .save() save persistent state to json file
-    def save(self, current_term=-1, voted_for=-1):
+    def save(self, current_term, voted_for):
         self.currentTerm = current_term
         self.votedFor = voted_for
         persistent = {"currentTerm": self.currentTerm, "votedFor": self.votedFor}
@@ -137,7 +139,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
     def follower(self):
         while True:
             self.role = KVServer.follower
-            self.save(voted_for=-1)
+            self.save(current_term=self.currentTerm, voted_for=-1)
             self.logger.critical(f'RAFT[Role]: Running as a follower')
             while time.time() - self.lastUpdate <= self.currElectionTimeout:
                 with self.followerCond:
@@ -173,29 +175,30 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     self.candidateCond.wait(self.currElectionTimeout-(time.time() - self.lastUpdate))
                 if self.numVotes >= self.majority or self.role == KVServer.follower:
                     break
-            self.save(voted_for=-1)
+            self.save(current_term=self.currentTerm, voted_for=-1)
             if self.numVotes >= self.majority:
                 with self.leaderCond:
                     self.leaderCond.notify_all()
                 with self.candidateCond:
-                    self.logger.critical(f"in candidate, larger than majority")
+                    # self.logger.critical(f"in candidate, larger than majority")
                     self.candidateCond.wait()
             elif self.role == KVServer.follower:
                 with self.followerCond:
                     self.followerCond.notify_all()
                 with self.candidateCond:
                     self.candidateCond.wait()
+            if time.time() - self.lastUpdate <= self.currElectionTimeout:
+                with self.candidateCond:
+                    self.candidateCond.wait(self.currElectionTimeout-(time.time() - self.lastUpdate))
 
     def leader(self):
         while True:
             # mcip: Use condition to control instead
             with self.leaderCond:
-                self.logger.critical(f"reached leader111, larger than majority")
+                # self.logger.critical(f"reached leader111, larger than majority")
                 self.leaderCond.wait()
-                self.logger.critical(f"reached leader222, larger than majority")
-            self.logger.critical(f"reached leader333, larger than majority")
             self.role = KVServer.leader
-            self.save(voted_for=-1)
+            self.save(current_term=self.currentTerm, voted_for=-1)  # Todo: voted_for = 1 here?
             self.logger.critical(f'RAFT[Role]: Running as a leader')
             self.leaderID = self.id
             # for each server it's the index of next log entry to send to that server
@@ -232,15 +235,15 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             if req_term < self.currentTerm or req_last_log_ind < self.lastLogIndex or \
                     req_last_log_term < self.lastLogTerm or \
                     (self.votedFor != -1 and self.votedFor != req_candidate_id):
+                if req_term > self.currentTerm:
+                    self.save(current_term=req_term, voted_for=self.votedFor)
                 vote_granted = False
-                self.logger.info(f'RAFT[Vote]: vote request denied for <{req_candidate_id}>, '
+                self.logger.info(f'RAFT[Vote]: vote request from <{req_candidate_id}> is denied, '
                                   f'currentTerm: <{self.currentTerm}>'
                                   f'\n reason: <{req_term < self.currentTerm}>, <{req_last_log_ind < self.lastLogIndex}>'
                                   f', <{req_last_log_term < self.lastLogTerm}> or voted for another')
-                if req_term > self.currentTerm:
-                    self.save(current_term=req_term)
             elif req_term == self.currentTerm:
-                self.save(voted_for=req_candidate_id)  # TODO: Add lock here?
+                self.save(current_term=self.currentTerm, voted_for=req_candidate_id)  # TODO: Add lock here?
                 if vote_granted:
                     self.logger.info(f'RAFT[Vote]: vote granted for server <{req_candidate_id}> w/ term <{self.currentTerm}>')
             # Find higher term in RequestVote message
@@ -250,6 +253,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 self.save(current_term=req_term, voted_for=req_candidate_id)
                 # step_down_kth = KThread(target=self.step_down, args=())
                 # step_down_kth.start()
+            self.lastUpdate = time.time()
             return kvstore_pb2.VoteResponse(term=self.currentTerm, voteGranted=vote_granted)
         except Exception as e:
             self.logger.error("RAFT[Vote]: f(): requestVote:")
@@ -262,12 +266,15 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                                                    lastLogIndex=self.lastLogIndex, lastLogTerm=self.lastLogTerm)
             # with grpc.insecure_channel(addr) as channel:
             channel = grpc.insecure_channel(addr)
+            grpc.channel_ready_future(channel).result()
             stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
             # self.logger.debug(f'Send vote request to server: <{idx}>')
             req_vote_resp = stub.requestVote(
                 vote_request, timeout=self.requestTimeout)  # timeout keyword ok?
-            # print(req_vote_resp.voteGranted, req_vote_resp.term)
-            # if I receive voteGranted
+            # Todo: mcip, does this improve?
+            num_rej_votes = 0
+            # Todo: mcip: add last update time
+            self.lastUpdate = time.time()
             # TODO: Add lock here to consider concurrency
             if req_vote_resp.voteGranted:
                 self.logger.info(f'vote received from server <{idx}>, vote count: <{self.numVotes}>, '
@@ -276,16 +283,20 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     self.numVotes += 1
                     if self.numVotes >= self.majority:
                         with self.candidateCond:
-                            self.logger.critical(f"thread_election, larger than majority")
+                            # self.logger.critical(f"thread_election, larger than majority")
                             self.candidateCond.notify_all()
             else:
-                self.logger.info(f'RAFT[Vote] vote rejected from server: <{idx}> w/ term: {req_vote_resp.term}')
+                # Todo: added by mcip, does this actually improve?
+                num_rej_votes += 1
+                self.logger.info(f'RAFT[Vote]: vote request to <{idx}> is rejected w/ term: {req_vote_resp.term}')
                 # discover higher term
                 if req_vote_resp.term > self.currentTerm:
-                    self.save(current_term=req_vote_resp.term)
+                    self.save(current_term=req_vote_resp.term, voted_for=-1)
                     self.role = KVServer.follower
                     with self.candidateCond:
                         self.candidateCond.notify_all()
+                elif num_rej_votes > self.majority:
+                    self.save(current_term=self.currentTerm, votedFor=-1)
         except Exception as e:
             self.logger.error("RAFT[Vote]: f(): thread_election:")
             self.logger.error(e)
@@ -328,6 +339,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 self.nextIndex[idx] = self.lastLogIndex + 1
             # with grpc.insecure_channel(addr) as channel:
             channel = grpc.insecure_channel(addr)
+            grpc.channel_ready_future(channel).result()
             # int32 term = 1;
             # bool success = 2;
             stub = kvstore_pb2_grpc.KeyValueStoreStub(channel)
@@ -344,8 +356,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                     self.logger.info(f"RAFT[AP_En]: thread_append_entry to <{idx}> failed")
                     # Failed since another server is leader now
                     if append_entry_response.term > self.currentTerm:
-                        self.save(current_term=append_entry_response.term)
-                        self.step_down()
+                        self.save(current_term=append_entry_response.term, voted_for=-1)  # voted_for = -1 here
+                        # self.step_down()
                     # Failed because of log inconsistency, decrement nextIndex and retry
                     else:
                         self.nextIndex[idx] = max(self.nextIndex[idx] - 1, 0)  # Todo: how to decrement correctly
@@ -401,21 +413,20 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                         or (request.prevLogIndex < len(self.log) and
                             self.log[request.prevLogIndex][0] != request.prevLogTerm):
                     # if request.term < self.currentTerm:  # Todo: do we need to start election here?
-                    #     election_kth = KThread(target=self.step_down, args=())
-                    #     election_kth.start()
-                    self.save(current_term=max(self.currentTerm, request.term))
+                    # Todo: whether this is correct?
+                    self.save(current_term=max(self.currentTerm, request.term), voted_for=-1)
                     self.logger.warning(f'RAFT: appendEntries received on server <{self.id}>, will return false; ')
                     self.logger.warning(f'RAFT[App_Entries]: <{request.term < self.currentTerm}>, '
                                         f'<{request.prevLogIndex > len(self.log)}>, '
                                         f'<{(request.prevLogIndex < len(self.log) and self.log[request.prevLogIndex][0] != request.prevLogTerm)}>')
                     self.logger.info(f'Parameters for false: req term: <{request.term}>, cur term: '
-                                      f'<{self.currentTerm}>, req prevLogIdx: <{request.prevLogIndex}>, '
-                                      f'length of server log <{len(self.log)}>')
+                                     f'<{self.currentTerm}>, req prevLogIdx: <{request.prevLogIndex}>, '
+                                     f'length of server log <{len(self.log)}>')
                     if request.prevLogIndex < len(self.log):
                         self.logger.info(f'term of log on prev log index: <{self.log[request.prevLogIndex][0]}>'
-                                          f'request prev log term: <{request.prevLogTerm}>')
+                                         f'request prev log term: <{request.prevLogTerm}>')
                 else:
-                    self.save(current_term=max(self.currentTerm, request.term))
+                    self.save(current_term=max(self.currentTerm, request.term), voted_for=-1)
                     # self.logger.info("RAFT: AppendEntries should succeed unless there is conflict entries")
                     success = True
                     #     existing entry conflicts with a new one, same idx different terms,
@@ -482,7 +493,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             with self.lastCommittedTermCond:
                 self.lastCommittedTermCond.notify_all()
         if self.lastLogTerm > self.currentTerm:
-            self.save(current_term=self.lastLogTerm)
+            self.save(current_term=self.lastLogTerm, voted_for=self.votedFor)
         self.logger.info(f'RAFT[Log]: Log updated on disk of server <{self.id}> ,'
                           f'last log index now: <{self.lastLogIndex}>'
                           f'log is: <{self.log}>')
