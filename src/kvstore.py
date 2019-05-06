@@ -233,6 +233,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             if idx == self.id:
                 continue
             # Create a thread for each request vote
+            # Todo: mcip: req_term should be the same
             election_thread = KThread(target=self.thread_election, args=(idx, addr, req_term, ))
             election_thread.start()
 
@@ -351,6 +352,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 if idx == self.id:
                     continue
                 # Create a thread for each append_entry message
+                # Todo: mcip: append entries term is the same
                 append_thread = KThread(target=self.thread_append_entry, args=(idx, addr, app_ent_term,))
                 append_thread.start()
             # Send append entry every following seconds, or be notified and wake up
@@ -364,11 +366,14 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             append_request.term = app_ent_term  # int32 term = 1;
             append_request.leaderID = self.id  # int32 leaderID = 2;
             append_request.prevLogIndex = self.nextIndex[idx]  # int32 prevLogIndex = 3;
-            append_request.prevLogTerm = 0  # int32 prevLogTerm = 4;
+            # int32 prevLogTerm = 4;
             if 0 <= self.nextIndex[idx] < len(self.log):
                 append_request.prevLogTerm = self.log[self.nextIndex[idx]][0]
+            else:
+                append_request.prevLogTerm = 0
             append_request.leaderCommit = self.commitIndex  # int32 leaderCommit = 6;
             last_req_log_idx = self.lastLogIndex
+            self.logger.info(f"[AP_En]: Debug entry <{append_request.prevLogTerm}>")
             if self.nextIndex[idx] < len(self.log):
                 for row in self.log[self.nextIndex[idx]:]:  # repeated LogEntry entries = 5;
                     entry = append_request.entries.add()
@@ -386,8 +391,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 self.logger.warning(f'[ABORTED]: we will not receive from <{self.leaderID}> '
                                     f'because of ChaosMonkey')
             else:
-                self.logger.info(f'[AP_En]: thread_append_entry to <{idx}>, '
-                                 f'req last log <{last_req_log_idx}>')
+                # self.logger.info(f'[AP_En]: thread_append_entry to <{idx}>, '
+                #                  f'req last log <{last_req_log_idx}>')
                                  # f'req entries \n<{append_request.entries}>')
                 append_entry_response = stub.appendEntries(
                     append_request, timeout=self.requestTimeout)
@@ -553,7 +558,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         if self.lastLogTerm > self.currentTerm:
             self.save(current_term=self.lastLogTerm, voted_for=self.votedFor)
         self.logger.info(f'[Log]: Log updated on disk of server <{self.id}> ,'
-                          f'last log index now: <{self.lastLogIndex}>'
+                          f'last log index now: <{self.lastLogIndex}>, '
                           f'log is: <{self.log}>')
 
     def applyToStateMachine(self, last_applied):
