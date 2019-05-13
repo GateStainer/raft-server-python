@@ -373,7 +373,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 append_request.prevLogTerm = 0
             append_request.leaderCommit = self.commitIndex  # int32 leaderCommit = 6;
             last_req_log_idx = self.lastLogIndex
-            self.logger.info(f"[AP_En]: Debug entry <{append_request.prevLogTerm}>")
+            # self.logger.info(f"[AP_En]: Debug entry <{append_request.prevLogTerm}>")
             if self.nextIndex[idx] < len(self.log):
                 for row in self.log[self.nextIndex[idx]:]:  # repeated LogEntry entries = 5;
                     entry = append_request.entries.add()
@@ -559,7 +559,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             self.save(current_term=self.lastLogTerm, voted_for=self.votedFor)
         self.logger.info(f'[Log]: Log updated on disk of server <{self.id}> ,'
                           f'last log index now: <{self.lastLogIndex}>, '
-                          f'log is: <{self.log}>')
+                          f'log is: LOG!!! ') # <{self.log}>')
 
     def applyToStateMachine(self, last_applied):
         # TODO: maybe we can append only? maybe we need synchronization
@@ -572,8 +572,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # Apply command in log order, notify all upon completion
         with self.appliedStateMachCond:
             self.appliedStateMachCond.notify_all()
-        self.logger.info(f'[StateMach]: Last applied index: <{self.lastApplied}>, '
-                          f'state machine updated to: <{self.stateMachine}>')
+        self.logger.info(f'[StateMach]: Last applied index: <{self.lastApplied}>, ')
+                          # f'state machine updated to: <{self.stateMachine}>')
 
     # def readWithKey(self, key):
     #     n = len(self.log)

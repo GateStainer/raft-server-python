@@ -12,8 +12,9 @@ def gen_fetchLog_script(server_list_file, pem_file):
 		for row in reader:
 			servers.append(dict(row))
 	script = ''
+	script += 'rm log/*\n'
 	for s in servers:
-		script += f'scp -i {pem_file} ec2-user@{s["address"]}:/home/ec2-user/raft/log/*  log/\n'
+		script += f'scp -i {pem_file} ec2-user@{s["address"]}:/home/ec2-user/raft/log/*.txt  log/\n'
 	with open('fetchLog.sh', 'w') as file:
 		file.write(script)
 	os.system('bash fetchLog.sh')
