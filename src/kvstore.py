@@ -265,7 +265,6 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             # self.logger.debug(f'Send vote request to server: <{idx}>')
             req_vote_resp = stub.requestVote(vote_request, timeout=self.requestTimeout)  # timeout keyword ok?
             # Todo: mcip, does this improve?
-            num_rej_votes = 0
             # Todo: Add lock here to consider concurrency
             if req_vote_resp.voteGranted:
                 self.logger.info(f'[Vote]: received from <{idx}>, vote count: <{self.numVotes}>')
@@ -279,7 +278,6 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             else:
                 self.logger.info(f'[Vote]: rejected from <{idx}> its term: {req_vote_resp.term}')
                 # Todo: added by mcip, does this actually improve?
-                num_rej_votes += 1
                 if self.role == KVServer.follower and req_vote_resp.term > self.currentTerm:
                     self.save(current_term=req_vote_resp.term, voted_for=-1)
                 # Todo: All servers: If RPC request or response contains term T> currentTerm, set current term = T,
@@ -373,7 +371,9 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                 append_request.prevLogTerm = 0
             append_request.leaderCommit = self.commitIndex  # int32 leaderCommit = 6;
             last_req_log_idx = self.lastLogIndex
+
             # self.logger.info(f"[AP_En]: Debug entry <{append_request.prevLogTerm}>")
+
             if self.nextIndex[idx] < len(self.log):
                 for row in self.log[self.nextIndex[idx]:]:  # repeated LogEntry entries = 5;
                     entry = append_request.entries.add()
