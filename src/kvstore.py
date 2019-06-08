@@ -558,7 +558,7 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
             self.save(current_term=self.lastLogTerm, voted_for=self.votedFor)
         self.logger.info(f'[Log]: Log updated on disk of server <{self.id}> ,'
                           f'last log index now: <{self.lastLogIndex}>, '
-                          f'log is: <{self.log}>')
+                          f'log is: LOG!!! ') # <{self.log}>')
 
     def applyToStateMachine(self, last_applied):
         # TODO: maybe we can append only? maybe we need synchronization
@@ -571,8 +571,8 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
         # Apply command in log order, notify all upon completion
         with self.appliedStateMachCond:
             self.appliedStateMachCond.notify_all()
-        self.logger.info(f'[StateMach]: Last applied index: <{self.lastApplied}>, '
-                          f'state machine updated to: <{self.stateMachine}>')
+        self.logger.info(f'[StateMach]: Last applied index: <{self.lastApplied}>, ')
+                          # f'state machine updated to: <{self.stateMachine}>')
 
     # def readWithKey(self, key):
     #     n = len(self.log)
@@ -690,7 +690,6 @@ class KVServer(kvstore_pb2_grpc.KeyValueStoreServicer):
                                                    timeout=self.requestTimeout)
             # Save state machine output with sequenceNum for client, discard any prior sequenceNum for client
             self.clientReqResults[request.clientID] = [self.stateMachine[request.key], request.sequenceNum]
-
             # ClientRPCStatus status = 1;
             # string response = 2;
             # int32 leaderHint = 3;

@@ -1,0 +1,135 @@
+[05:25,487 CRITICAL]: [Role]: Running as a follower, elec timeout <0.2550>
+[05:25,488 INFO]: mcheng916mbp.local
+[05:25,488 INFO]: Server [9-localhost-7009] listening localhost:7009
+[05:25,744 CRITICAL]: [Role]: Running as a candidate, elec timeout <0.2550>
+[05:25,745 INFO]: [Vote]: Start, voted for self <9> term <1> election timeout: <0.2835>
+[05:25,764 INFO]: [Vote]: rejected from <0> its term: 5
+[05:25,765 INFO]: [Vote]: reject vote request from <8>, currentTerm <1>
+ reason: <False>, <False>, <False> or voted for another
+[05:25,766 INFO]: [Vote]: rejected from <5> its term: 5
+[05:25,767 INFO]: [Vote]: rejected from <3> its term: 5
+[05:25,769 INFO]: [Vote]: rejected from <4> its term: 5
+[05:25,771 INFO]: [Vote]: rejected from <1> its term: 5
+[05:25,773 INFO]: [Vote]: rejected from <6> its term: 5
+[05:25,773 INFO]: [Vote]: rejected from <2> its term: 5
+[05:25,774 INFO]: [Vote]: rejected from <7> its term: 5
+[05:25,775 CRITICAL]: [Role]: Running as a follower, elec timeout <0.2835>
+[05:25,776 INFO]: [Vote]: rejected from <8> its term: 5
+[05:25,786 INFO]: [Vote]: rejected from <10> its term: 5
+[05:25,787 INFO]: [Vote]: reject vote request from <10>, currentTerm <5>
+ reason: <True>, <False>, <False> or voted for another
+[05:25,980 CRITICAL]: [Vote]: vote granted for <10> due to higher term <7>
+[05:26,214 INFO]: [Vote]: reject vote request from <8>, currentTerm <7>
+ reason: <False>, <False>, <False> or voted for another
+[05:26,268 CRITICAL]: [Role]: Running as a candidate, elec timeout <0.2835>
+[05:26,269 INFO]: [Vote]: Start, voted for self <9> term <9> election timeout: <0.2819>
+[05:26,274 INFO]: [Vote]: rejected from <1> its term: 9
+[05:26,275 INFO]: [Vote]: rejected from <0> its term: 9
+[05:26,277 INFO]: [Vote]: rejected from <2> its term: 9
+[05:26,279 INFO]: [Vote]: rejected from <3> its term: 9
+[05:26,279 INFO]: [Vote]: rejected from <4> its term: 9
+[05:26,280 INFO]: [Vote]: rejected from <6> its term: 9
+[05:26,281 INFO]: [Vote]: rejected from <5> its term: 9
+[05:26,282 INFO]: [Vote]: rejected from <7> its term: 9
+[05:26,283 INFO]: [Vote]: rejected from <8> its term: 9
+[05:26,284 INFO]: [Vote]: rejected from <10> its term: 9
+[05:26,294 INFO]: [Vote]: reject vote request from <0>, currentTerm <9>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,295 INFO]: [Vote]: reject vote request from <0>, currentTerm <9>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,296 INFO]: [Vote]: reject vote request from <1>, currentTerm <9>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,340 INFO]: [Vote]: reject vote request from <5>, currentTerm <9>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,341 INFO]: [Vote]: reject vote request from <5>, currentTerm <9>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,342 INFO]: [Vote]: reject vote request from <5>, currentTerm <9>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,342 INFO]: [Vote]: reject vote request from <4>, currentTerm <9>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,345 INFO]: [Vote]: reject vote request from <2>, currentTerm <9>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,346 INFO]: [Vote]: reject vote request from <2>, currentTerm <9>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,349 INFO]: [Vote]: reject vote request from <3>, currentTerm <9>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,349 INFO]: [Vote]: reject vote request from <3>, currentTerm <9>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,352 INFO]: [Vote]: reject vote request from <6>, currentTerm <8>
+ reason: <True>, <False>, <False> or voted for another
+[05:26,353 INFO]: [Log]: append entries, leader commit <-1>
+[05:26,353 CRITICAL]: [Role]: Running as a follower, elec timeout <0.2819>
+[05:26,354 INFO]: [Log]: Log updated on disk of server <9> ,last log index now: <0>, log is: LOG!!! 
+[05:26,356 INFO]: [Vote]: reject vote request from <3>, currentTerm <8>
+ reason: <False>, <True>, <False> or voted for another
+[05:26,388 INFO]: [Vote]: reject vote request from <7>, currentTerm <8>
+ reason: <True>, <True>, <True> or voted for another
+[05:26,388 INFO]: [Vote]: reject vote request from <7>, currentTerm <8>
+ reason: <True>, <True>, <True> or voted for another
+[05:26,447 CRITICAL]: [Vote]: vote granted for <1> due to higher term <10>
+[05:26,473 INFO]: [Log]: append entries, leader commit <-1>
+[05:26,473 INFO]: [Log]: Log updated on disk of server <9> ,last log index now: <1>, log is: LOG!!! 
+[05:26,591 INFO]: [Log]: received a heartbeat
+[05:26,707 INFO]: [Log]: received a heartbeat
+[05:26,824 INFO]: [Log]: received a heartbeat
+[05:26,938 INFO]: [Log]: received a heartbeat
+[05:27,57 INFO]: [Log]: received a heartbeat
+[05:27,173 INFO]: [Log]: received a heartbeat
+[05:27,287 INFO]: [Log]: received a heartbeat
+[05:27,400 INFO]: [Log]: received a heartbeat
+[05:27,514 INFO]: [Log]: received a heartbeat
+[05:27,629 INFO]: [Log]: received a heartbeat
+[05:27,742 INFO]: [Log]: received a heartbeat
+[05:27,860 INFO]: [Log]: received a heartbeat
+[05:27,976 INFO]: [Log]: received a heartbeat
+[05:28,95 INFO]: [Log]: received a heartbeat
+[05:28,209 INFO]: [Log]: received a heartbeat
+[05:28,327 INFO]: [Log]: received a heartbeat
+[05:28,439 INFO]: [Log]: received a heartbeat
+[05:28,552 INFO]: [Log]: received a heartbeat
+[05:28,665 INFO]: [Log]: received a heartbeat
+[05:28,779 INFO]: [Log]: received a heartbeat
+[05:28,894 INFO]: [Log]: received a heartbeat
+[05:29,5 INFO]: [Log]: received a heartbeat
+[05:29,120 INFO]: [Log]: received a heartbeat
+[05:29,233 INFO]: [Log]: received a heartbeat
+[05:29,344 INFO]: [Log]: received a heartbeat
+[05:29,468 INFO]: [Log]: received a heartbeat
+[05:29,575 INFO]: [Log]: received a heartbeat
+[05:29,697 INFO]: [Log]: received a heartbeat
+[05:29,800 INFO]: [Log]: received a heartbeat
+[05:29,916 INFO]: [Log]: received a heartbeat
+[05:30,32 INFO]: [Log]: received a heartbeat
+[05:30,146 INFO]: [Log]: received a heartbeat
+[05:30,262 INFO]: [Log]: received a heartbeat
+[05:30,382 INFO]: [Log]: received a heartbeat
+[05:30,502 INFO]: [Log]: received a heartbeat
+[05:30,617 INFO]: [Log]: received a heartbeat
+[05:30,736 INFO]: [Log]: received a heartbeat
+[05:30,853 INFO]: [Log]: received a heartbeat
+[05:30,969 INFO]: [Log]: received a heartbeat
+[05:31,88 INFO]: [Log]: received a heartbeat
+[05:31,206 INFO]: [Log]: received a heartbeat
+[05:31,323 INFO]: [Log]: received a heartbeat
+[05:31,444 INFO]: [Log]: received a heartbeat
+[05:31,562 INFO]: [Log]: received a heartbeat
+[05:31,680 INFO]: [Log]: received a heartbeat
+[05:31,796 INFO]: [Log]: received a heartbeat
+[05:31,912 INFO]: [Log]: received a heartbeat
+[05:32,28 INFO]: [Log]: received a heartbeat
+[05:32,141 INFO]: [Log]: received a heartbeat
+[05:32,256 INFO]: [Log]: received a heartbeat
+[05:32,375 INFO]: [Log]: received a heartbeat
+[05:32,487 INFO]: [Log]: received a heartbeat
+[05:32,605 INFO]: [Log]: received a heartbeat
+[05:32,722 INFO]: [Log]: received a heartbeat
+[05:32,839 INFO]: [Log]: received a heartbeat
+[05:32,956 INFO]: [Log]: received a heartbeat
+[05:33,73 INFO]: [Log]: received a heartbeat
+[05:33,191 INFO]: [Log]: received a heartbeat
+[05:33,309 INFO]: [Log]: received a heartbeat
+[05:33,426 INFO]: [Log]: received a heartbeat
+[05:33,542 INFO]: [Log]: received a heartbeat
+[05:33,659 INFO]: [Log]: received a heartbeat
+[05:33,776 INFO]: [Log]: received a heartbeat
+[05:33,894 INFO]: [Log]: received a heartbeat
